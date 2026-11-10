@@ -1,12 +1,9 @@
-import asyncio
-import re
-import time
-from collections import defaultdict
+import contextlib
 
 from loguru import logger
 from pyrogram import Client, filters
-from pyrogram.enums import ChatAction, ParseMode
-from pyrogram.types import Message
+from pyrogram.enums import ParseMode
+from pyrogram.types import LinkPreviewOptions, Message
 
 from src.core.bot import bot
 from src.core.context import get_context
@@ -15,146 +12,106 @@ from src.utils.formatters import TelegramFormatter
 from src.utils.i18n import at
 from src.utils.input import finalize_input_capture, is_waiting_for_input
 
+from .conversation import (
+    compact_history,
+    conversation_lock,
+    conversation_scope,
+    is_addressed,
+    request_content,
+    typing_indicator,
+)
+from .prompts import build_system_prompt
 from .repository import AIRepository
-from .service import AIService
+from .service import DEFAULT_MODELS, AIService, AIServiceError
 from .telegram_markdown import render_pyrogram_html
-
-# Per-chat locks to prevent concurrent AI requests from hitting rate limits
-ai_locks = defaultdict(asyncio.Lock)
-
-
-def _compact_history(msgs, max_m, max_c):
-    if not msgs:
-        return []
-    out, total = [], 0
-    for m in reversed(msgs[-max_m:]):
-        content = str(m.get("content", ""))
-        if not content:
-            continue
-        if total + len(content) > max_c:
-            if (rem := max_c - total) <= 80:
-                break
-            content = content[-rem:]
-        out.append({"role": m.get("role", "user"), "content": content})
-        if (total := total + len(content)) >= max_c:
-            break
-    return out[::-1]
-
-
-def _is_request_too_large_error(err):
-    e = str(err).lower()
-    return any(x in e for x in ("request_too_large", "413", "entity too large"))
-
-
-def _trim_text(v, max_c):
-    return v.strip()[-max_c:] if v and len(v.strip()) > max_c else (v.strip() if v else v)
 
 
 @bot.on_message(filters.group & ~filters.service & ~filters.bot, group=100)
 @safe_handler
 async def ai_message_handler(client: Client, message: Message):
-    cid = message.chat.id
-    uid = message.from_user.id if message.from_user else 0
-    text = message.text or message.caption
-    if not client.me or not text or text.startswith("/"):
+    if not client.me or not is_addressed(message, client.me):
         return
-
     ctx = get_context()
-    await AIRepository.add_message(
-        ctx,
-        cid,
-        message.id,
-        uid,
-        message.from_user.first_name if message.from_user else "Unknown",
-        text,
-    )
-    s = await AIRepository.get_settings(ctx, cid)
-    if not s or not s.isAssistantEnabled or not s.apiKey:
+    settings = await AIRepository.get_runtime_settings(ctx, message.chat.id)
+    if not settings or not settings.isAssistantEnabled or not settings.apiKey:
         return
-
-    me_tag = f"@{client.me.username}".lower()
-    if not (
-        me_tag in text.lower()
-        or (
-            message.reply_to_message
-            and message.reply_to_message.from_user
-            and message.reply_to_message.from_user.id == client.me.id
-        )
-    ):
-        return
-
-    from .prompts import BASE_PROMPT, OPERATIONAL_RULES
-
-    pvd = (s.provider or "openai").lower()
-    lim = {"m": 12, "c": 5000} if pvd == "groq" else {"m": 24, "c": 12000}
-
+    scope = conversation_scope(message)
     try:
-        async with ai_locks[cid]:
-            # Mandatory delay to prevent hitting provider rate limits (e.g. Groq)
-            await asyncio.sleep(2.0)
-
-            await client.send_chat_action(cid, ChatAction.TYPING)
-            sys_p = (s.systemPrompt or BASE_PROMPT).format(
-                bot_name=client.me.first_name, bot_username=client.me.username
+        async with conversation_lock(scope):
+            # A queued request must respect disabling or changing the assistant.
+            settings = await AIRepository.get_runtime_settings(ctx, message.chat.id)
+            if not settings or not settings.isAssistantEnabled or not settings.apiKey:
+                return
+            history = await AIRepository.get_conversation(ctx, *scope)
+            current = {"role": "user", "content": request_content(message, client.me)}
+            provider = (settings.provider or "openai").lower()
+            model = settings.modelId or DEFAULT_MODELS.get(provider)
+            if not model:
+                raise AIServiceError("AI model is not configured.", status_code=400)
+            prompt = build_system_prompt(
+                client.me.first_name, client.me.username or "", settings.systemPrompt
             )
-        sys_p = f"IDENTITY: You are @{client.me.username} ({client.me.first_name})\n\n{sys_p}"
-        if s.systemPrompt:
-            sys_p += OPERATIONAL_RULES
-
-        async def _call(m_l, c_l):
-            hist = _compact_history(
-                await AIRepository.get_context(ctx, cid, client.me.id), m_l, c_l
-            )
-            st = time.time()
-            res = await AIService.call_ai(
-                s.provider,
-                s.apiKey,
-                s.modelId or "gpt-3.5-turbo",
-                _trim_text(sys_p, 3200),
-                _trim_text(s.customInstruction, 900),
-                hist,
-            )
-            return res, time.time() - st
-
-        try:
-            resp, dur = await _call(lim["m"], lim["c"])
-        except Exception as e:
-            if not _is_request_too_large_error(e):
-                raise
-            resp, dur = await _call(8, 3000)
-
-        if resp:
-            full = resp.strip()
-            sent = await TelegramFormatter.send_safe(
-                client,
-                cid,
-                render_pyrogram_html(full),
-                reply_to_message_id=message.id,
-                parse_mode=ParseMode.HTML,
-            )
-            if sent:
-                await AIRepository.add_message(
-                    ctx, cid, sent[0].id, client.me.id, client.me.first_name, full
+            budget = 6000 if provider == "groq" else 14000
+            async with typing_indicator(client, message):
+                try:
+                    response = await AIService.call_ai(
+                        provider,
+                        settings.apiKey,
+                        model,
+                        prompt,
+                        settings.customInstruction,
+                        compact_history(history, max_chars=budget) + [current],
+                    )
+                except AIServiceError as exc:
+                    if not exc.too_large:
+                        raise
+                    # Keep the latest question intact; reduce only older conversation history.
+                    response = await AIService.call_ai(
+                        provider,
+                        settings.apiKey,
+                        model,
+                        prompt,
+                        settings.customInstruction,
+                        compact_history(history, max_messages=4, max_chars=2500) + [current],
+                    )
+                if not response or not response.strip():
+                    raise AIServiceError("AI provider returned no text.")
+                sent = await TelegramFormatter.send_safe(
+                    client,
+                    message.chat.id,
+                    render_pyrogram_html(response),
+                    reply_to_message_id=message.id,
+                    parse_mode=ParseMode.HTML,
+                    message_thread_id=scope[1] or None,
+                    link_preview_options=LinkPreviewOptions(is_disabled=True),
                 )
-    except Exception as e:
-        logger.debug(f"AI Fail {cid}: {e}")
-        err = await at(cid, "ai.error_prefix", error=str(e))
-        if "rate_limit" in str(e).lower():
-            w = (
-                re.search(r"in ([\d\.]+)s", str(e)).group(1)
-                if re.search(r"in ([\d\.]+)s", str(e))
-                else await at(cid, "ai.few")
-            )
-            err = await at(
-                cid, "ai.rate_limit", seconds=f"{await at(cid, 'ai.latency_fmt_short', duration=w)}"
-            )
-        elif _is_request_too_large_error(e):
-            await AIRepository.clear_context(ctx, cid)
-            err = await at(cid, "ai.error_entity_too_large")
-        import contextlib
-
+                if sent:
+                    await AIRepository.save_turn(
+                        ctx, *scope, message.id, current["content"], response
+                    )
+    except Exception as exc:
+        # Do not echo raw provider failures, secrets, or user prompts to the group.
+        logger.warning("AI request failed in chat {} ({})", message.chat.id, type(exc).__name__)
+        key = "ai.unavailable"
+        if isinstance(exc, AIServiceError):
+            if exc.status_code == 429:
+                key = "ai.rate_limited"
+            elif exc.too_large:
+                key = "ai.request_too_long"
+            elif exc.status_code in {400, 401, 403, 404}:
+                key = "ai.configuration_error"
         with contextlib.suppress(Exception):
-            await message.reply_text(err)
+            await message.reply_text(await at(message.chat.id, key))
+
+
+@bot.on_message(filters.command("resetai") & filters.group, group=99)
+@safe_handler
+async def reset_ai_conversation(client: Client, message: Message):
+    ctx = get_context()
+    scope = conversation_scope(message)
+    async with conversation_lock(scope):
+        await AIRepository.clear_conversation(ctx, *scope)
+    await message.reply_text(await at(message.chat.id, "ai.conversation_reset"))
 
 
 AI_FIELDS = ["aiApiKey", "aiModelId", "aiSystemPrompt", "aiInstruction"]

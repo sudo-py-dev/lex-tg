@@ -13,5 +13,10 @@ class AIAssistantPlugin(Plugin):
     async def setup(self, client: Client, ctx: AppContext) -> None:
         pass
 
+    async def teardown(self) -> None:
+        from .service import AIService
+
+        await AIService.close()
+
 
 register(AIAssistantPlugin())

@@ -10,7 +10,6 @@ from src.core.bot import bot
 from src.plugins.admin_panel.decorators import AdminPanelContext, admin_panel_context
 from src.plugins.admin_panel.handlers.ai_kbs import model_selection_kb
 from src.plugins.admin_panel.handlers.callbacks.common import (
-    AI_PROVIDER_DEFAULT_MODELS,
     _next_ai_provider,
     _panel_lang_id,
     _plain,
@@ -21,6 +20,7 @@ from src.plugins.admin_panel.handlers.callbacks.common import (
 )
 from src.plugins.admin_panel.handlers.keyboards import ai_security_kb
 from src.plugins.ai_assistant.repository import AIRepository
+from src.plugins.ai_assistant.service import DEFAULT_MODELS as AI_PROVIDER_DEFAULT_MODELS
 from src.utils.actions import AI_GUARD_ACTIONS, cycle_action
 from src.utils.i18n import at
 from src.utils.input import capture_next_input

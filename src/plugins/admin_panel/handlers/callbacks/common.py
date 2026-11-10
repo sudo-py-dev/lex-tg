@@ -21,15 +21,6 @@ from src.utils.actions import AI_PROVIDERS, cycle_action
 from src.utils.i18n import at
 from src.utils.media import parse_watermark_config
 
-AI_PROVIDER_DEFAULT_MODELS = {
-    "openai": "gpt-4o-mini",
-    "gemini": "gemini-3.5-flash",
-    "deepseek": "deepseek-chat",
-    "groq": "llama3-8b-8192",
-    "qwen": "qwen-plus",
-    "anthropic": "claude-3-haiku-20240307",
-}
-
 
 def _panel_lang_id(is_pm: bool, user_id: int, chat_id: int) -> int:
     return user_id if is_pm else chat_id

@@ -1,4 +1,4 @@
-from .ai import AIChatContext, AIGuardSettings, AISettings
+from .ai import AIChatContext, AIConversationTurn, AIGuardSettings, AISettings
 from .chats import (
     AllowedChannel,
     ChatAdmin,
@@ -53,6 +53,7 @@ __all__ = [
     "StickerBlock",
     "ReportSetting",
     "AIChatContext",
+    "AIConversationTurn",
     "AISettings",
     "AIGuardSettings",
     "ChannelProtect",

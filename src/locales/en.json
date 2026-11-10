@@ -839,5 +839,10 @@
   "welcome.enabled": "✅ Welcome messages are now enabled.",
   "welcome.reset": "✅ Welcome message reset to default.",
   "welcome.test": "🧪 **Welcome Test**\n\n{text}",
-  "welcome.updated": "✅ Welcome message updated and enabled."
+  "welcome.updated": "✅ Welcome message updated and enabled.",
+  "ai.unavailable": "I couldn't get a reply just now. Please try again shortly.",
+  "ai.rate_limited": "The AI provider is busy. Please try again shortly.",
+  "ai.request_too_long": "This request is too long for the selected model. Please shorten it and try again.",
+  "ai.configuration_error": "The AI configuration needs attention. Ask a group admin to check the provider, model, and API key.",
+  "ai.conversation_reset": "Your AI conversation in this topic has been reset. Mention me to start fresh."
 }

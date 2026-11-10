@@ -1,58 +1,65 @@
 import re
 
+_TOKEN = re.compile(r"<[^>]*>|&(?:#[0-9]+|#x[0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]+);|[^<&]+|[<&]")
+_TAG = re.compile(r"<(/?)([A-Za-z][A-Za-z0-9-]*)\b[^>]*>")
+
+
+def _units(text: str) -> int:
+    return len(text.encode("utf-16-le")) // 2
+
 
 def smart_split(text: str, limit: int = 4096) -> list[str]:
-    """
-    Split text into chunks while preserving Telegram HTML tags.
-    Closes open tags at segment ends and re-opens them in next segments.
-    """
-    if len(text) <= limit:
+    """Split Telegram HTML without cutting tags, entities, or UTF-16 characters."""
+    if limit < 32:
+        raise ValueError("limit must be at least 32")
+    if _units(text) <= limit:
         return [text]
+    chunks, stack = [], []
+    current, size, has_text = "", 0, False
 
-    tag_re = re.compile(r"<(/?)([a-zA-Z0-9-]+)([^>]*)>")
-    chunks = []
-    remaining = text
-    active_stack = []
+    def closing():
+        return "".join(f"</{name}>" for name, _ in reversed(stack))
 
-    while remaining:
-        prefix = "".join(active_stack)
-        current_closing = "".join(
-            [f"</{tag_re.match(t).group(2)}>" for t in reversed(active_stack)]
-        )
+    def flush():
+        nonlocal current, size, has_text
+        if not has_text:
+            raise ValueError("HTML markup exceeds the Telegram chunk limit")
+        chunks.append(current + closing())
+        current = "".join(opening for _, opening in stack)
+        size = _units(current)
+        has_text = False
 
-        max_chunk_payload = limit - len(prefix) - len(current_closing)
-
-        if max_chunk_payload <= 0:
-            max_chunk_payload = limit // 2
-
-        if len(remaining) <= max_chunk_payload:
-            chunks.append(prefix + remaining)
-            break
-
-        split_point = remaining.rfind("\n", 0, max_chunk_payload)
-        if split_point == -1:
-            split_point = remaining.rfind(" ", 0, max_chunk_payload)
-        if split_point <= 0:
-            split_point = max_chunk_payload
-
-        segment = remaining[:split_point]
-        remaining = remaining[split_point:]
-
-        segment_stack = []
-        for match in tag_re.finditer(segment):
-            is_closing, name, _ = match.groups()
+    for match in _TOKEN.finditer(text):
+        token = match.group()
+        tag = _TAG.fullmatch(token)
+        if tag:
+            is_closing, name = tag.groups()
             if is_closing:
-                if segment_stack and tag_re.match(segment_stack[-1]).group(2) == name:
-                    segment_stack.pop()
-                elif active_stack and tag_re.match(active_stack[-1]).group(2) == name:
-                    active_stack.pop()
+                if stack and stack[-1][0] == name:
+                    stack.pop()
+                current += token
+                size += _units(token)
             else:
-                segment_stack.append(match.group(0))
-
-        closing_str = "".join([f"</{tag_re.match(t).group(2)}>" for t in reversed(active_stack)])
-
-        chunks.append(prefix + segment + closing_str)
-
-        active_stack.extend(segment_stack)
-
+                reserve = _units(closing() + f"</{name}>")
+                if size + _units(token) + reserve > limit:
+                    flush()
+                if size + _units(token) + reserve > limit:
+                    raise ValueError("HTML markup exceeds the Telegram chunk limit")
+                current += token
+                size += _units(token)
+                stack.append((name, token))
+            continue
+        # Escaped entities are indivisible; ordinary text is split on code points.
+        pieces = [token] if token.startswith("&") and token.endswith(";") else token
+        for piece in pieces:
+            width = _units(piece)
+            if size + width + _units(closing()) > limit:
+                flush()
+            if size + width + _units(closing()) > limit:
+                raise ValueError("HTML markup exceeds the Telegram chunk limit")
+            current += piece
+            size += width
+            has_text = True
+    if has_text:
+        chunks.append(current + closing())
     return chunks

@@ -8,6 +8,7 @@ from sqlalchemy import (
     BigInteger,
     DateTime,
     ForeignKey,
+    Index,
     String,
     Text,
     false,
@@ -67,4 +68,25 @@ class AIChatContext(Base):
         default=lambda: datetime.now(UTC),
         server_default=func.now(),
         nullable=False,
+    )
+
+
+class AIConversationTurn(Base):
+    """Completed turns scoped to one participant in one chat/topic."""
+
+    __tablename__ = "aiconversationturn"
+    __table_args__ = (
+        Index("ix_ai_conversation_scope", "chatId", "threadId", "userId", "id"),
+        Index("ix_ai_conversation_expiry", "timestamp"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    chatId: Mapped[int] = mapped_column(BigInteger, ForeignKey("chatsettings.id"), nullable=False)
+    threadId: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    userId: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    messageId: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    userText: Mapped[str] = mapped_column(Text, nullable=False)
+    assistantText: Mapped[str] = mapped_column(Text, nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )
