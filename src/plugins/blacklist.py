@@ -3,6 +3,7 @@ import re
 from pyrogram import Client, StopPropagation, filters
 from pyrogram.types import InlineKeyboardMarkup, Message
 
+from src.core.blacklist_defaults import describe_block_pattern
 from src.core.bot import bot
 from src.core.context import get_context
 from src.core.plugin import Plugin, register
@@ -80,7 +81,7 @@ async def list_blacklist_handler(client: Client, message: Message) -> None:
         return await message.reply(await at(message.chat.id, "blacklist.list_empty"))
     await message.reply(
         f"{await at(message.chat.id, 'blacklist.list_header')}\n"
-        + "\n".join(f"• `{b.pattern}` ({b.action})" for b in bl)
+        + "\n".join(f"• `{describe_block_pattern(b.pattern)}` ({b.action})" for b in bl)
     )
 
 

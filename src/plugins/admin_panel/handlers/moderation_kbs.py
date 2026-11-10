@@ -10,6 +10,7 @@ from pyrogram.types import (
     ReplyKeyboardMarkup,
 )
 
+from src.core.blacklist_defaults import describe_block_pattern
 from src.utils.i18n import at
 
 from ..repository import get_chat_settings
@@ -255,7 +256,7 @@ async def blacklist_kb(
         [
             [
                 InlineKeyboardButton(
-                    f"{await at(at_id, 'panel.blacklist_badge_regex' if b.isRegex else ('panel.blacklist_badge_wildcard' if b.isWildcard else 'panel.blacklist_badge_literal'))} {(b.pattern[:30] + '...') if len(b.pattern) > 30 else b.pattern}",
+                    f"{await at(at_id, 'panel.blacklist_badge_regex' if b.isRegex else ('panel.blacklist_badge_wildcard' if b.isWildcard else 'panel.blacklist_badge_literal'))} {(describe_block_pattern(b.pattern)[:30] + '...') if len(describe_block_pattern(b.pattern)) > 30 else describe_block_pattern(b.pattern)}",
                     callback_data="panel:noop",
                 ),
                 InlineKeyboardButton("❌", callback_data=f"panel:blacklist_remove:{b.id}:{page}"),

@@ -2,6 +2,7 @@ import re
 
 from sqlalchemy import func, select
 
+from src.core.blacklist_defaults import WORD_PACKAGES, preset_pattern
 from src.core.context import AppContext
 from src.db.models import Blacklist
 from src.utils.message_rules import detect_pattern_type, invalidate_rules
@@ -57,8 +58,11 @@ async def add_blacklist(
 
 async def remove_blacklist(ctx: AppContext, chat_id: int, pattern: str) -> bool:
     """Remove a pattern from the blacklist."""
+    patterns = [pattern]
+    if any(pattern in words for words in WORD_PACKAGES.values()):
+        patterns.append(preset_pattern(pattern))
     async with ctx.db() as session:
-        stmt = select(Blacklist).where(Blacklist.chatId == chat_id, Blacklist.pattern == pattern)
+        stmt = select(Blacklist).where(Blacklist.chatId == chat_id, Blacklist.pattern.in_(patterns))
         result = await session.execute(stmt)
         objs = result.scalars().all()
         if not objs:

@@ -8,6 +8,11 @@ from typing import Any
 
 import regex
 
+from src.core.blacklist_defaults import (
+    PRESET_PREFIX,
+    describe_block_pattern,
+    normalize_preset_text,
+)
 from src.utils.local_cache import get_cache
 
 RULE_TTL = 60
@@ -34,12 +39,19 @@ class BlockRule:
     literal: str | None
     matcher: Any = None
     is_regex: bool = False
+    normalize: bool = False
 
     @classmethod
     def compile(cls, row):
         if row.isRegex:
             try:
-                return cls(row.pattern, None, regex.compile(row.pattern, regex.I), True)
+                return cls(
+                    describe_block_pattern(row.pattern),
+                    None,
+                    regex.compile(row.pattern, regex.I),
+                    True,
+                    row.pattern.startswith(PRESET_PREFIX),
+                )
             except regex.error:
                 # Preserve literal fallback for invalid patterns already in the database.
                 return cls(row.pattern, row.pattern.lower())
@@ -50,6 +62,7 @@ class BlockRule:
 
 def match_block(rules: tuple[BlockRule, ...], text: str) -> BlockRule | None:
     folded = text.lower()
+    normalized = None
     deadline = time.monotonic() + REGEX_BUDGET
     for rule in rules:
         if rule.literal is not None:
@@ -60,7 +73,11 @@ def match_block(rules: tuple[BlockRule, ...], text: str) -> BlockRule | None:
             if remaining <= 0:
                 continue
             try:
-                if rule.matcher.search(text, timeout=min(0.005, remaining)):
+                if rule.normalize and normalized is None:
+                    normalized = normalize_preset_text(text)
+                if rule.matcher.search(
+                    normalized if rule.normalize else text, timeout=min(0.005, remaining)
+                ):
                     return rule
             except TimeoutError:
                 continue
