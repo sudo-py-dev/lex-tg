@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 
 from src.core.context import AppContext
 from src.db.models import ChatAdmin, ChatSettings
+from src.utils.chat_types import normalize_chat_type
 from src.utils.i18n import at
 
 
@@ -152,8 +153,10 @@ async def get_user_admin_chats(
                 title = chat.title or await at(user_id, "panel.unknown_chat", id=cid)
                 results.append((cid, title))
                 await update_chat_title(ctx, cid, title)
-                if chat.type.name.lower() != s.chatType:
-                    await update_chat_setting(ctx, cid, "chatType", chat.type.name.lower())
+                if normalize_chat_type(chat.type).name.lower() != s.chatType:
+                    await update_chat_setting(
+                        ctx, cid, "chatType", normalize_chat_type(chat.type).name.lower()
+                    )
             except (BadRequest, Forbidden, RPCError, FloodWait):
                 results.append((cid, await at(user_id, "panel.unknown_chat", id=cid)))
 
@@ -169,23 +172,23 @@ async def get_chat_info(ctx: AppContext, chat_id: int) -> tuple[ChatType, str]:
 
     if settings and settings.chatType:
         with contextlib.suppress(KeyError, AttributeError):
-            chat_type = ChatType[settings.chatType.upper()]
+            chat_type = normalize_chat_type(ChatType[settings.chatType.upper()])
 
     from src.core.bot import bot
 
     try:
         chat = await bot.get_chat(chat_id)
-        chat_type = chat.type
+        chat_type = normalize_chat_type(chat.type)
         title = chat.title or chat.first_name or title
-        if title != settings.title:
-            await update_chat_title(ctx, chat_id, title)
     except (BadRequest, Forbidden, RPCError):
         pass
     except FloodWait as e:
         await asyncio.sleep(e.value + 1)
         with contextlib.suppress(RPCError):
             chat = await bot.get_chat(chat_id)
-            chat_type = chat.type
+            chat_type = normalize_chat_type(chat.type)
+    if settings.chatType != chat_type.name.lower() or settings.title != title:
+        await update_settings(ctx, chat_id, chatType=chat_type.name.lower(), title=title)
     return chat_type, title
 
 

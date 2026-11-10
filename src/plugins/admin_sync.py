@@ -6,6 +6,7 @@ from src.core.bot import bot
 from src.core.context import get_context
 from src.db.repositories.admins import remove_admin, upsert_admin
 from src.utils.admin_cache import invalidate_cache
+from src.utils.chat_types import normalize_chat_type
 
 _REGISTERED_CHATS = set()
 
@@ -18,8 +19,7 @@ async def ensure_chat_identity(ctx, chat):
     from src.db.repositories.chats import get_chat_settings, update_settings
 
     settings = await get_chat_settings(ctx, chat.id)
-    raw_type = chat.type.name.lower()
-    chat_type = "group" if raw_type in ("group", "supergroup") else "channel"
+    chat_type = normalize_chat_type(chat.type).name.lower()
 
     linked_id = getattr(chat, "linked_chat_id", None)
     if (

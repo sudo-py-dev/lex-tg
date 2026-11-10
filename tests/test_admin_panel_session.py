@@ -12,6 +12,9 @@ from src.plugins.admin_panel.handlers import commands
 async def test_admin_panel_remembers_private_user(mocker, chat_id):
     ctx = object()
     mocker.patch.object(commands, "get_context", return_value=ctx)
+    mocker.patch.object(
+        commands, "resolve_chat_type", new_callable=AsyncMock, return_value=ChatType.GROUP
+    )
     check = mocker.patch.object(commands, "is_admin", new_callable=AsyncMock, return_value=True)
     save = mocker.patch.object(commands, "set_active_chat", new_callable=AsyncMock)
     dashboard = mocker.patch.object(commands, "send_admin_dashboard", new_callable=AsyncMock)
@@ -21,7 +24,7 @@ async def test_admin_panel_remembers_private_user(mocker, chat_id):
         from_user=SimpleNamespace(id=999),
     )
     client = object()
-    await commands.open_settings_panel(client, message, chat_id, chat_type=ChatType.GROUP)
+    await commands.open_settings_panel(client, message, chat_id, chat_type="channel")
     check.assert_awaited_once_with(client, chat_id, 123)
     save.assert_awaited_once_with(ctx, 123, chat_id, chat_type="group")
     dashboard.assert_awaited_once_with(client, 123, chat_id, chat_type=ChatType.GROUP, is_pm=True)

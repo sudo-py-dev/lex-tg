@@ -49,8 +49,7 @@ async def open_settings_panel(
         return
 
     if is_pm:
-        if not chat_type:
-            chat_type = await resolve_chat_type(ctx, chat_id)
+        chat_type = await resolve_chat_type(ctx, chat_id)
         chat_type_str = chat_type if isinstance(chat_type, str) else chat_type.name.lower()
         await set_active_chat(ctx, user_id, chat_id, chat_type=chat_type_str)
 
@@ -69,9 +68,7 @@ async def send_admin_dashboard(
     ctx = get_context()
     from ..repository import get_chat_info
 
-    chat_type_obj, chat_title = await get_chat_info(ctx, chat_id)
-    if not chat_type:
-        chat_type = chat_type_obj
+    chat_type, chat_title = await get_chat_info(ctx, chat_id)
 
     if chat_type == ChatType.CHANNEL or chat_type == "channel":
         from .keyboards import channel_settings_kb

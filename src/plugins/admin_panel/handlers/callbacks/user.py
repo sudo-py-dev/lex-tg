@@ -109,6 +109,11 @@ async def on_select_channel(client: Client, callback: CallbackQuery):
 
     from src.plugins.admin_panel.handlers.keyboards import channel_settings_kb
 
+    chat_type, _ = await get_chat_info(ctx, channel_id)
+    if chat_type != ChatType.CHANNEL:
+        await on_select_chat(client, callback)
+        return
+
     await set_active_chat(ctx, user_id, channel_id, chat_type="channel")
     s = await get_chat_settings(ctx, channel_id)
     title = s.title or f"Channel {channel_id}"
