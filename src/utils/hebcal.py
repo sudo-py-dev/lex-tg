@@ -55,10 +55,11 @@ async def get_shabbat_events(
 
             if start_str and end_str:
                 target_tz = ZoneInfo(tzid)
-                start_time = datetime.fromisoformat(start_str).replace(tzinfo=target_tz)
-                end_time = datetime.fromisoformat(end_str).replace(tzinfo=target_tz)
-                logger.debug(f"Shabbat times for {tzid} served from cache")
-                return start_time, end_time, is_holiday
+                cached_start = datetime.fromisoformat(start_str).replace(tzinfo=target_tz)
+                cached_end = datetime.fromisoformat(end_str).replace(tzinfo=target_tz)
+                if cached_end > datetime.now(target_tz):
+                    logger.debug(f"Shabbat times for {tzid} served from cache")
+                    return cached_start, cached_end, is_holiday
     except Exception as e:
         logger.debug(f"Cache read error for {tzid}: {e}")
 
@@ -142,11 +143,12 @@ async def get_shabbat_events_batch(
 
                 if start_str and end_str:
                     target_tz = ZoneInfo(tzid)
-                    start_time = datetime.fromisoformat(start_str).replace(tzinfo=target_tz)
-                    end_time = datetime.fromisoformat(end_str).replace(tzinfo=target_tz)
-                    results[tzid] = (start_time, end_time, is_holiday)
-                    logger.debug(f"Batch: Shabbat times for {tzid} served from cache")
-                    continue
+                    cached_start = datetime.fromisoformat(start_str).replace(tzinfo=target_tz)
+                    cached_end = datetime.fromisoformat(end_str).replace(tzinfo=target_tz)
+                    if cached_end > datetime.now(target_tz):
+                        results[tzid] = (cached_start, cached_end, is_holiday)
+                        logger.debug(f"Batch: Shabbat times for {tzid} served from cache")
+                        continue
         except Exception as e:
             logger.debug(f"Batch cache read error for {tzid}: {e}")
 
@@ -240,4 +242,4 @@ async def is_shabbat_now(tzid: str) -> bool:
         target_tz = ZoneInfo("Asia/Jerusalem")
 
     now = datetime.now(target_tz)
-    return start <= now <= end
+    return start <= now < end

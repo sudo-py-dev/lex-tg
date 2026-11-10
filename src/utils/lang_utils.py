@@ -3,7 +3,6 @@ from __future__ import annotations
 import emoji
 
 from src.core.context import AppContext
-from src.utils.i18n import at, t
 
 LANG_DATA = {
     "af": {"name": "Afrikaans", "emoji": ":South_Africa:"},

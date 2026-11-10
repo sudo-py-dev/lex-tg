@@ -15,6 +15,8 @@ class AsyncSnapshotCache:
     """
 
     def __init__(self, snapshot_path: str = "data/cache_snapshot.pkl", max_size: int = 10000):
+        if max_size < 1:
+            raise ValueError("max_size must be positive")
         self.snapshot_path = Path(snapshot_path)
         self.max_size = max_size
         self._data: OrderedDict[str, Any] = OrderedDict()
@@ -33,7 +35,7 @@ class AsyncSnapshotCache:
                 return None
 
             expiry = self._expiries.get(key)
-            if expiry and time.time() > expiry:
+            if expiry is not None and time.time() >= expiry:
                 self._delete_internal(key)
                 self._misses += 1
                 return None
@@ -49,7 +51,7 @@ class AsyncSnapshotCache:
                 self._data.move_to_end(key)
 
             self._data[key] = value
-            if ttl:
+            if ttl is not None:
                 self._expiries[key] = time.time() + ttl
             else:
                 self._expiries.pop(key, None)
@@ -67,7 +69,7 @@ class AsyncSnapshotCache:
         """Increments an integer key with LRU update."""
         async with self._lock:
             expiry = self._expiries.get(key)
-            if expiry and time.time() > expiry:
+            if expiry is not None and time.time() >= expiry:
                 self._delete_internal(key)
 
             current = self._data.get(key, 0)
@@ -91,6 +93,10 @@ class AsyncSnapshotCache:
         async with self._lock:
             if key not in self._data:
                 return False
+            expiry = self._expiries.get(key)
+            if expiry is not None and time.time() >= expiry:
+                self._delete_internal(key)
+                return False
             self._expiries[key] = time.time() + seconds
             self._data.move_to_end(key)
             return True
@@ -102,7 +108,7 @@ class AsyncSnapshotCache:
                 return False
 
             expiry = self._expiries.get(key)
-            if expiry and time.time() > expiry:
+            if expiry is not None and time.time() >= expiry:
                 self._delete_internal(key)
                 return False
 
@@ -115,9 +121,13 @@ class AsyncSnapshotCache:
             if key not in self._data:
                 return -2
             expiry = self._expiries.get(key)
-            if not expiry:
+            if expiry is None:
                 return -1
-            remaining = int(expiry - time.time())
+            now = time.time()
+            if now >= expiry:
+                self._delete_internal(key)
+                return -2
+            remaining = int(expiry - now)
             return max(0, remaining)
 
     async def delete(self, key: str) -> bool:
@@ -128,7 +138,10 @@ class AsyncSnapshotCache:
     def _delete_internal(self, key: str) -> bool:
         """Internal helper to delete a key without acquiring the lock."""
         self._expiries.pop(key, None)
-        return self._data.pop(key, None) is not None
+        if key not in self._data:
+            return False
+        del self._data[key]
+        return True
 
     def _evict_oldest(self) -> None:
         """Removes the least recently used item."""
@@ -137,7 +150,7 @@ class AsyncSnapshotCache:
         key, _ = self._data.popitem(last=False)
         self._expiries.pop(key, None)
         self._evictions += 1
-        logger.debug(f"Cache reached 10k items. Evicted oldest (LRU): {key}")
+        logger.debug(f"Cache reached {self.max_size} items. Evicted oldest (LRU): {key}")
 
     async def stats(self) -> dict[str, Any]:
         """Returns cache usage statistics."""
@@ -157,7 +170,7 @@ class AsyncSnapshotCache:
         """Purges all expired keys."""
         async with self._lock:
             now = time.time()
-            expired_keys = [k for k, exp in self._expiries.items() if now > exp]
+            expired_keys = [k for k, exp in self._expiries.items() if now >= exp]
             for k in expired_keys:
                 self._delete_internal(k)
             return len(expired_keys)
@@ -205,10 +218,13 @@ class AsyncSnapshotCache:
                 self._expiries = state.get("expiries", {})
 
                 now = time.time()
-                expired_keys = [k for k, exp in self._expiries.items() if now > exp]
+                expired_keys = [k for k, exp in self._expiries.items() if now >= exp]
                 for k in expired_keys:
                     self._data.pop(k, None)
                     self._expiries.pop(k, None)
+
+                while len(self._data) > self.max_size:
+                    self._evict_oldest()
 
                 logger.debug(f"Loaded cache snapshot: {len(self._data)} items.")
                 return True

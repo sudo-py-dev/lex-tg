@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -125,7 +126,9 @@ async def test_check_user_permission(db_session, mock_context, mocker):
     user_id = 888
 
     # Create ChatSettings
-    settings = ChatSettings(id=chat_id, isActive=True)
+    settings = ChatSettings(
+        id=chat_id, isActive=True, lastAdminsUpdate=datetime.now(UTC).replace(tzinfo=None)
+    )
     db_session.add(settings)
     await db_session.commit()
 
@@ -260,3 +263,104 @@ async def test_bot_permission_persistence(db_session, mock_context, mocker):
         with patch("src.db.repositories.chats.get_chat_settings", return_value=settings):
             assert await has_permission(client, chat_id, Permission.CAN_BAN) is True
             assert await has_permission(client, chat_id, Permission.CAN_DELETE) is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("partial", [False, True])
+async def test_failed_admin_sync_preserves_groups(db_session, mock_context, partial):
+    from src.core.constants import CacheKeys
+    from src.db.repositories.chats import get_user_admin_chats
+    from src.utils.local_cache import AsyncSnapshotCache
+
+    chat_id, user_id = -12345, 123
+    db_session.add(ChatSettings(id=chat_id, title="Saved group", isActive=True))
+    await db_session.commit()
+    db_session.add(ChatAdmin(chatId=chat_id, userId=user_id, status="owner", firstName="Owner"))
+    await db_session.commit()
+    cache = AsyncSnapshotCache()
+    await cache.set(CacheKeys.admins(chat_id), json.dumps([user_id]))
+    await cache.set(f"admin_detail:{chat_id}:{user_id}", "owner")
+    client = MagicMock()
+    member = MagicMock()
+    member.user.id = 456
+    member.user.first_name = "New admin"
+    member.user.username = None
+    member.status = ChatMemberStatus.ADMINISTRATOR
+    member.privileges = None
+
+    async def failing_members(*args, **kwargs):
+        if partial:
+            yield member
+        raise RuntimeError("Telegram temporarily unavailable")
+
+    client.get_chat_members.side_effect = failing_members
+    with (
+        patch("src.utils.admin_cache.get_context", return_value=mock_context),
+        patch("src.utils.admin_cache.get_cache", return_value=cache),
+    ):
+        await sync_admins_from_telegram(client, chat_id, force=True)
+
+    assert await db_session.get(ChatAdmin, (chat_id, user_id)) is not None
+    assert await db_session.get(ChatAdmin, (chat_id, 456)) is None
+    assert await get_user_admin_chats(mock_context, client, user_id) == [(chat_id, "Saved group")]
+    assert await cache.get(f"admin_detail:{chat_id}:{user_id}") == "owner"
+    assert await cache.get(CacheKeys.admins(chat_id)) == json.dumps([user_id])
+    assert not await cache.exists(f"admin_sync_cooldown:{chat_id}")
+
+
+@pytest.mark.asyncio
+async def test_successful_sync_removes_old_privileges(db_session, mock_context):
+    from src.utils.local_cache import AsyncSnapshotCache
+
+    chat_id, removed_id = -54321, 123
+    db_session.add(ChatSettings(id=chat_id, isActive=True))
+    await db_session.commit()
+    db_session.add(ChatAdmin(chatId=chat_id, userId=removed_id, status="owner", firstName="Old"))
+    await db_session.commit()
+    cache = AsyncSnapshotCache()
+    await cache.set(f"admin_detail:{chat_id}:{removed_id}", "owner")
+    client = MagicMock()
+    member = MagicMock()
+    member.user.id = 456
+    member.user.first_name = "New owner"
+    member.user.username = None
+    member.status = ChatMemberStatus.OWNER
+    member.privileges = None
+
+    async def members(*args, **kwargs):
+        yield member
+
+    client.get_chat_members.side_effect = members
+    with (
+        patch("src.utils.admin_cache.get_context", return_value=mock_context),
+        patch("src.utils.admin_cache.get_cache", return_value=cache),
+    ):
+        assert await sync_admins_from_telegram(client, chat_id, force=True) == {456}
+    db_session.expire_all()
+    assert await db_session.get(ChatAdmin, (chat_id, removed_id)) is None
+    assert await db_session.get(ChatAdmin, (chat_id, 456)) is not None
+    assert await cache.get(f"admin_detail:{chat_id}:{removed_id}") is None
+    assert await cache.get(f"admin_detail:{chat_id}:456") == "owner"
+
+
+@pytest.mark.asyncio
+async def test_admin_snapshot_commit_failure_preserves_previous_list(
+    db_session, mock_context, mocker
+):
+    from src.db.repositories.admins import replace_chat_admins
+
+    chat_id = -76543
+    db_session.add(ChatSettings(id=chat_id, isActive=True))
+    await db_session.commit()
+    db_session.add(ChatAdmin(chatId=chat_id, userId=123, status="owner", firstName="Original"))
+    await db_session.commit()
+    commit = mocker.patch.object(db_session, "commit", side_effect=RuntimeError("Commit failed"))
+    with pytest.raises(RuntimeError, match="Commit failed"):
+        await replace_chat_admins(
+            mock_context,
+            chat_id,
+            [ChatAdmin(chatId=chat_id, userId=456, status="owner", firstName="Replacement")],
+        )
+    commit.assert_awaited_once()
+    assert await db_session.get(ChatAdmin, (chat_id, 123)) is not None
+    assert await db_session.get(ChatAdmin, (chat_id, 456)) is None

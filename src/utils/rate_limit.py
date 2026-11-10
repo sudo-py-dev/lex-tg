@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from dataclasses import dataclass
 
@@ -28,7 +29,10 @@ class TokenBucketLimiter:
 
     async def wait(self, key: str = "global", cost: float = 1.0) -> None:
         """Wait until enough tokens are available for this key."""
-        need = max(0.01, float(cost))
+        requested = float(cost)
+        if not math.isfinite(requested) or requested > self.burst:
+            raise ValueError("cost must be finite and cannot exceed burst capacity")
+        need = max(0.01, requested)
         while True:
             sleep_for = 0.0
             async with self._lock:

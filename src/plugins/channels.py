@@ -344,7 +344,7 @@ class ChannelsPlugin(Plugin):
         sig_text = settings.signatureText
         sig = f"\n\n{sig_text}"
 
-        if sig_text not in current and len(current) + len(sig) <= limit * 2:
+        if sig_text not in current and len(current) + len(sig) <= limit:
             return f"{current}{sig}"
 
         return None

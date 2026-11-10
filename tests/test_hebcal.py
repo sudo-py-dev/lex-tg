@@ -6,6 +6,13 @@ import pytest
 from hebcal_api.utils.types import EventType
 
 from src.utils.hebcal import get_shabbat_events, is_shabbat_now
+from src.utils.local_cache import AsyncSnapshotCache
+
+
+@pytest.fixture(autouse=True)
+def isolated_shabbat_cache():
+    with patch("src.utils.hebcal.get_cache", return_value=AsyncSnapshotCache()):
+        yield
 
 
 class MockHoliday:
@@ -137,7 +144,7 @@ async def test_hebcal_scenarios(
 
     with (
         patch("src.utils.hebcal.fetch_shabbat_async", new_callable=AsyncMock) as mock_fetch,
-        patch("src.utils.hebcal.datetime") as mock_dt,
+        patch("src.utils.hebcal.datetime", wraps=datetime) as mock_dt,
     ):
         mock_fetch.return_value = MockResponse(items)
         mock_dt.now.return_value = aware_now
@@ -158,3 +165,46 @@ async def test_hebcal_scenarios(
         mock_dt.now.return_value = aware_now
         is_active = await is_shabbat_now(tzid)
         assert is_active == expected_is_shabbat
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("batch", [False, True])
+async def test_expired_event_is_refetched_before_cache_ttl(batch):
+    import json
+
+    from src.utils.hebcal import get_cache, get_shabbat_events_batch
+
+    tzid = "Asia/Jerusalem"
+    tz = ZoneInfo(tzid)
+    now = datetime(2026, 4, 18, 19, tzinfo=tz)
+    next_start = datetime(2026, 4, 24, 18, tzinfo=tz)
+    next_end = datetime(2026, 4, 25, 19, tzinfo=tz)
+    await get_cache().set(
+        f"shabbat_events:{tzid}",
+        json.dumps(
+            {
+                "start": datetime(2026, 4, 17, 18, tzinfo=tz).isoformat(),
+                "end": now.isoformat(),
+                "is_holiday": False,
+            }
+        ),
+        ttl=3600,
+    )
+    with (
+        patch("src.utils.hebcal.datetime", wraps=datetime) as clock,
+        patch("src.utils.hebcal.fetch_shabbat_async", new_callable=AsyncMock) as fetch,
+    ):
+        clock.now.return_value = now
+        fetch.return_value = MockResponse(
+            [
+                MockItem(EventType.CANDLES, next_start),
+                MockItem(EventType.HAVDALAH, next_end),
+            ]
+        )
+        result = (
+            (await get_shabbat_events_batch([tzid]))[tzid]
+            if batch
+            else await get_shabbat_events(tzid)
+        )
+        assert result == (next_start, next_end, False)
+        fetch.assert_awaited_once()

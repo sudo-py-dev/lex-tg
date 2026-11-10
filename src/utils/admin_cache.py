@@ -14,7 +14,12 @@ from pyrogram.types import ChatPermissions
 
 from src.core.constants import CacheKeys
 from src.core.context import get_context
-from src.db.repositories.admins import clear_chat_admins, get_admin_from_db, upsert_admin
+from src.db.models.chats import ChatAdmin
+from src.db.repositories.admins import (
+    get_admin_from_db,
+    get_admins_for_chat,
+    replace_chat_admins,
+)
 from src.utils.local_cache import get_cache
 
 _TTL = 3600  # 1 hour for local cache
@@ -87,8 +92,6 @@ async def sync_admins_from_telegram(client: Client, chat_id: int, force: bool = 
         logger.debug(f"Admin sync for {chat_id} suppressed (cooldown active)")
         # Return what we have in DB/Cache currently to avoid re-triggering sync
         ctx = get_context()
-        from src.db.repositories.admins import get_admins_for_chat
-
         db_admins = await get_admins_for_chat(ctx, chat_id)
         if db_admins:
             return {a.userId for a in db_admins}
@@ -101,8 +104,9 @@ async def sync_admins_from_telegram(client: Client, chat_id: int, force: bool = 
             # Set cooldown early to prevent rapid concurrent hits
             await cache.setex(cooldown_key, 600, True)  # 10 minutes
 
-            # Clear existing DB entries for this chat to ensure accuracy
-            await clear_chat_admins(ctx, chat_id)
+            # Fetch the entire list before changing persisted membership.
+            admins = []
+            details = {}
 
             async for m in client.get_chat_members(
                 chat_id, filter=enums.ChatMembersFilter.ADMINISTRATORS
@@ -120,31 +124,35 @@ async def sync_admins_from_telegram(client: Client, chat_id: int, force: bool = 
                         if attr.startswith("can_")
                     }
 
-                # Update DB
-                await upsert_admin(
-                    ctx, chat_id, m.user.id, status, m.user.first_name, m.user.username, privs
-                )
-
-                # Update specialized cache key
-                cache_key = f"admin_detail:{chat_id}:{m.user.id}"
-                await cache.setex(cache_key, _TTL, "owner" if status == "owner" else privs or {})
-
-                # If this is the bot itself, also update ChatSettings.botPrivileges
-                if m.user.id == client.me.id:
-                    from src.db.repositories.chats import update_chat_setting
-
-                    await update_chat_setting(
-                        ctx, chat_id, "botPrivileges", json.dumps(privs or {})
+                admins.append(
+                    ChatAdmin(
+                        chatId=chat_id,
+                        userId=m.user.id,
+                        status=status,
+                        firstName=m.user.first_name,
+                        username=m.user.username,
+                        privileges=json.dumps(privs) if privs else None,
                     )
-                    # Also update bot_privs cache
-                    await cache.setex(f"bot_privs:{chat_id}", _TTL, privs or {})
+                )
+                details[m.user.id] = "owner" if status == "owner" else privs or {}
 
-            # Update lastAdminsUpdate timestamp
+            previous_admins = await get_admins_for_chat(ctx, chat_id)
+            await replace_chat_admins(ctx, chat_id, admins)
+
+            # Remove privileges for demoted/departed admins as well as refreshing members.
+            for previous in previous_admins:
+                await cache.delete(f"admin_detail:{chat_id}:{previous.userId}")
+            await cache.delete(f"bot_privs:{chat_id}")
+            for user_id, detail in details.items():
+                await cache.setex(f"admin_detail:{chat_id}:{user_id}", _TTL, detail)
+
             from src.db.repositories.chats import update_chat_setting
 
-            await update_chat_setting(
-                ctx, chat_id, "lastAdminsUpdate", datetime.now(UTC).replace(tzinfo=None)
-            )
+            bot_detail = details.get(client.me.id)
+            bot_privileges = bot_detail if isinstance(bot_detail, dict) else {}
+            await update_chat_setting(ctx, chat_id, "botPrivileges", json.dumps(bot_privileges))
+            if bot_detail is not None:
+                await cache.setex(f"bot_privs:{chat_id}", _TTL, bot_detail)
 
             # Update global list cache
             await cache.set(CacheKeys.admins(chat_id), json.dumps(list(admin_ids)), ttl=_TTL)
