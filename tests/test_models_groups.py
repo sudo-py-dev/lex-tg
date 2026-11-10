@@ -36,6 +36,7 @@ async def test_groupsettings_duplicate_id(db_session):
     gs1 = ChatSettingsFactory.build(id=-111)
     db_session.add(gs1)
     await db_session.flush()
+    db_session.expunge(gs1)
 
     gs2 = ChatSettingsFactory.build(id=-111)
     db_session.add(gs2)

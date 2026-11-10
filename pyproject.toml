@@ -9,6 +9,7 @@ dependencies = [
     "uvloop; sys_platform != 'win32'",
     "sqlalchemy>=2.0",
     "asyncpg",
+    "aiosqlite>=0.22.1",
     "alembic",
     "apscheduler>=3.10",
     "pydantic-settings>=2.0",
@@ -53,7 +54,6 @@ dev = [
     "mypy",
     "ruff",
     "pylint",
-    "aiosqlite>=0.22.1",
     "rich>=13.0.0",
 ]
 

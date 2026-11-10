@@ -1,7 +1,6 @@
 import asyncio
 from collections.abc import AsyncGenerator
 
-import pytest
 import pytest_asyncio
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -12,12 +11,25 @@ from src.db import Base
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for each test case."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+_collection_loop: asyncio.AbstractEventLoop | None = None
+
+
+def pytest_sessionstart(session):
+    """Provide a loop for Telegram client imports during test collection."""
+    global _collection_loop
+    _collection_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(_collection_loop)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if _collection_loop is not None:
+        # Decorator imports enqueue handler registration on the collection loop.
+        pending = asyncio.all_tasks(_collection_loop)
+        if pending:
+            _collection_loop.run_until_complete(asyncio.gather(*pending))
+        _collection_loop.run_until_complete(_collection_loop.shutdown_asyncgens())
+        _collection_loop.close()
+    asyncio.set_event_loop(None)
 
 
 @pytest_asyncio.fixture(scope="function")

@@ -37,6 +37,7 @@ async def test_sudouser_unique_userId(db_session):
     sudo1 = SudoUserFactory.build(userId=777)
     db_session.add(sudo1)
     await db_session.flush()
+    db_session.expunge(sudo1)
 
     sudo2 = SudoUserFactory.build(userId=777)
     db_session.add(sudo2)

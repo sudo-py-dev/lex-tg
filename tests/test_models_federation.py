@@ -29,6 +29,7 @@ async def test_federation_duplicate_id(db_session):
     fed1 = FederationFactory.build(id="fed-unique")
     db_session.add(fed1)
     await db_session.flush()
+    db_session.expunge(fed1)
 
     fed2 = FederationFactory.build(id="fed-unique")
     db_session.add(fed2)
