@@ -1,4 +1,3 @@
-import fnmatch
 import re
 
 from pyrogram import Client, StopPropagation, filters
@@ -12,10 +11,15 @@ from src.db.repositories.blacklist import (
     get_all_blacklist,
     remove_blacklist,
 )
-from src.db.repositories.chats import get_chat_settings as get_settings
 from src.utils.decorators import admin_permission_required, safe_handler
 from src.utils.i18n import at
 from src.utils.input import finalize_input_capture, is_waiting_for_input
+from src.utils.message_rules import (
+    detect_pattern_type,
+    get_block_rules,
+    get_block_settings,
+    match_block,
+)
 from src.utils.moderation import execute_moderation_action, resolve_sender
 from src.utils.permissions import Permission
 
@@ -30,18 +34,13 @@ class BlacklistPlugin(Plugin):
         pass
 
 
-def detect_pattern_type(p: str) -> tuple[bool, bool, str]:
-    is_r = any(c in "^$+.?{}[]()|" for c in p)
-    return is_r, ("*" in p and not is_r), p
-
-
 @bot.on_message(filters.command(["addblacklist", "blacklistadd"]) & filters.group)
 @safe_handler
 @admin_permission_required(Permission.CAN_BAN)
 async def add_blacklist_handler(client: Client, message: Message) -> None:
     if len(message.command) < 2:
         return
-    ctx, p = get_context(), message.text.split(None, 1)[1].strip().lower()
+    ctx, p = get_context(), message.text.split(None, 1)[1].strip()
     is_r, is_w, p = detect_pattern_type(p)
     try:
         if await add_blacklist(ctx, message.chat.id, p, is_regex=is_r, is_wildcard=is_w):
@@ -52,6 +51,8 @@ async def add_blacklist_handler(client: Client, message: Message) -> None:
             if str(e) == "blacklist_limit_reached"
             else "blacklist.err_already_exists"
             if str(e) == "blacklist_already_exists"
+            else "panel.blacklist_invalid_regex"
+            if str(e) == "blacklist_invalid_regex"
             else "error.generic"
         )
         await message.reply(await at(message.chat.id, k))
@@ -63,7 +64,7 @@ async def add_blacklist_handler(client: Client, message: Message) -> None:
 async def rm_blacklist_handler(client: Client, message: Message) -> None:
     if len(message.command) < 2:
         return
-    ctx, p = get_context(), message.text.split(None, 1)[1].strip().lower()
+    ctx, p = get_context(), detect_pattern_type(message.text.split(None, 1)[1])[2]
     if await remove_blacklist(ctx, message.chat.id, p):
         await message.reply(await at(message.chat.id, "blacklist.removed", pattern=p))
     else:
@@ -86,40 +87,30 @@ async def list_blacklist_handler(client: Client, message: Message) -> None:
 @bot.on_message(filters.group & (filters.text | filters.caption), group=-60)
 @safe_handler
 async def blacklist_interceptor(client: Client, message: Message) -> None:
-    t = (message.text or message.caption or "").lower()
-    if not t:
-        return
-    uid, _, white = await resolve_sender(client, message)
-    if not uid or white:
-        return
+    t = message.text or message.caption or ""
     ctx = get_context()
-    bl = await get_all_blacklist(ctx, message.chat.id)
-    if not bl:
+    rules = await get_block_rules(ctx, message.chat.id)
+    if not rules:
         return
-    s = await get_settings(ctx, message.chat.id)
+    s = await get_block_settings(ctx, message.chat.id)
     if (
-        getattr(s, "blacklistScanButtons", False)
+        s.scan_buttons
         and message.reply_markup
         and isinstance(message.reply_markup, InlineKeyboardMarkup)
     ):
         for row in message.reply_markup.inline_keyboard:
             for b in row:
-                t += f" {b.text.lower() if b.text else ''} {b.url.lower() if b.url else ''}"
-    match = None
-    for b in bl:
-        try:
-            p = fnmatch.translate(b.pattern) if b.isWildcard else b.pattern
-            if re.search(p, t, re.I | (re.S if b.isWildcard else 0)):
-                match = b
-                break
-        except re.error:
-            if b.pattern.lower() in t:
-                match = b
-                break
-    if match and await execute_moderation_action(
+                t += f" {b.text if b.text else ''} {b.url if b.url else ''}"
+    match = match_block(rules, t)
+    if not match:
+        return
+    uid, _, white = await resolve_sender(client, message)
+    if not uid or white:
+        return
+    if await execute_moderation_action(
         client,
         message,
-        s.blacklistAction.lower(),
+        s.action,
         await at(message.chat.id, "blacklist.reason", pattern=match.pattern),
         "Blacklist",
         "blacklist.violation_notice",
@@ -138,7 +129,7 @@ async def blacklist_input_handler(client: Client, message: Message) -> None:
     uid, cid, p = (
         message.from_user.id,
         s["chat_id"],
-        str(message.text or message.caption or "").strip().lower(),
+        str(message.text or message.caption or "").strip(),
     )
     if not p:
         return
@@ -157,6 +148,8 @@ async def blacklist_input_handler(client: Client, message: Message) -> None:
             if str(e) == "blacklist_already_exists"
             else "panel.blacklist_limit_reached"
             if str(e) == "blacklist_limit_reached"
+            else "panel.blacklist_invalid_regex"
+            if str(e) == "blacklist_invalid_regex"
             else "error.generic"
         )
         return await message.reply(await at(uid, k))

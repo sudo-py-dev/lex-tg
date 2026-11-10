@@ -1,6 +1,5 @@
 import contextlib
 import json
-import re
 
 from pyrogram import Client, StopPropagation, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -11,7 +10,6 @@ from src.core.plugin import Plugin, register
 from src.db.repositories.filters import (
     add_filter,
     get_all_filters,
-    get_filters_for_chat,
     remove_all_filters,
     remove_filter,
 )
@@ -24,6 +22,7 @@ from src.utils.input import (
     is_waiting_for_input,
 )
 from src.utils.local_cache import get_cache
+from src.utils.message_rules import get_reply_rules
 from src.utils.permissions import Permission, has_permission, is_admin
 from src.utils.telegram_storage import extract_message_data
 
@@ -104,7 +103,10 @@ async def stop_filter_handler(client: Client, message: Message) -> None:
         return await message.reply(await at(message.chat.id, "error.bot_no_permission"))
     if len(message.command) < 2:
         return
-    kw = message.command[1].lower()
+    kw = message.text.split(None, 1)[1].strip()
+    if len(kw) >= 2 and kw[0] in {'"', "'"} and kw[-1] == kw[0]:
+        kw = kw[1:-1]
+    kw = kw.lower()
     if await remove_filter(get_context(), message.chat.id, kw):
         await message.reply(await at(message.chat.id, "filter.removed", keyword=kw))
     else:
@@ -139,50 +141,38 @@ async def list_filters_handler(client: Client, message: Message) -> None:
 async def filters_interceptor(client: Client, message: Message) -> None:
     if not message.text or getattr(message, "command", None):
         return
-    if not (fs := await get_filters_for_chat(get_context(), message.chat.id)):
-        return
-    t, adm = message.text, None
-    for f in fs:
-        s = f.settings or {}
-        if (
-            s.get("isAdminOnly")
-            and (
-                adm := (
-                    adm
-                    if adm is not None
-                    else await is_admin(client, message.chat.id, message.from_user.id)
-                )
-            )
-            is False
-        ):
+    rules = await get_reply_rules(get_context(), message.chat.id)
+    adm = None
+    for f in rules:
+        if not f.matches(message.text):
             continue
-        kw, msg = (
-            (f.keyword if s.get("caseSensitive") else f.keyword.lower()),
-            (t if s.get("caseSensitive") else t.lower()),
+        if f.admin_only:
+            if adm is None:
+                sender = message.from_user or message.sender_chat
+                adm = bool(sender) and await is_admin(client, message.chat.id, sender.id)
+            if not adm:
+                continue
+        p = TelegramFormatter.parse_message(
+            text=f.text,
+            user=message.from_user,
+            chat_id=message.chat.id,
+            chat_title=message.chat.title,
+            bot_username=client.me.username,
         )
-        if msg == kw if s.get("matchMode") == "full" else re.search(rf"\b{re.escape(kw)}\b", msg):
-            p = TelegramFormatter.parse_message(
-                text=f.text,
-                user=message.from_user,
-                chat_id=message.chat.id,
-                chat_title=message.chat.title,
-                bot_username=client.me.username,
+        if f.file_id:
+            await TelegramFormatter.send_media_parsed(
+                client,
+                message.chat.id,
+                f.response_type,
+                f.file_id,
+                p,
+                reply_to_message_id=message.id,
             )
-            if f.fileId:
-                await TelegramFormatter.send_media_parsed(
-                    client,
-                    message.chat.id,
-                    f.responseType,
-                    f.fileId,
-                    p,
-                    reply_to_message_id=message.id,
-                )
-            else:
-                await TelegramFormatter.send_parsed(
-                    client, message.chat.id, p, reply_to_message_id=message.id
-                )
-            raise StopPropagation
-            break
+        else:
+            await TelegramFormatter.send_parsed(
+                client, message.chat.id, p, reply_to_message_id=message.id
+            )
+        raise StopPropagation
 
 
 # --- Admin Panel Input Handlers ---

@@ -2,6 +2,7 @@ from sqlalchemy import delete, func, select
 
 from src.core.context import AppContext
 from src.db.models import Filter
+from src.utils.message_rules import invalidate_rules
 
 
 async def add_filter(
@@ -39,6 +40,7 @@ async def add_filter(
             session.add(filter_obj)
 
         await session.commit()
+        await invalidate_rules("filters", chat_id)
         await session.refresh(filter_obj)
         return filter_obj
 
@@ -67,6 +69,7 @@ async def update_filter_by_id(
 
         session.add(filter_obj)
         await session.commit()
+        await invalidate_rules("filters", filter_obj.chatId)
         return True
 
 
@@ -79,6 +82,7 @@ async def remove_filter(ctx: AppContext, chat_id: int, keyword: str) -> bool:
         if filter_obj:
             await session.delete(filter_obj)
             await session.commit()
+            await invalidate_rules("filters", filter_obj.chatId)
             return True
         return False
 
@@ -90,6 +94,7 @@ async def remove_filter_by_id(ctx: AppContext, filter_id: int) -> bool:
         if filter_obj:
             await session.delete(filter_obj)
             await session.commit()
+            await invalidate_rules("filters", filter_obj.chatId)
             return True
         return False
 
@@ -100,6 +105,7 @@ async def remove_all_filters(ctx: AppContext, chat_id: int) -> int:
         stmt = delete(Filter).where(Filter.chatId == chat_id)
         result = await session.execute(stmt)
         await session.commit()
+        await invalidate_rules("filters", chat_id)
         return result.rowcount
 
 

@@ -89,9 +89,12 @@ async def on_blacklist_remove(_: Client, callback: CallbackQuery, ap_ctx: AdminP
         from src.db.models import Blacklist
 
         obj = await session.get(Blacklist, bid)
-        if obj:
+        if obj and obj.chatId == chat_id:
             await session.delete(obj)
             await session.commit()
+            from src.utils.message_rules import invalidate_rules
+
+            await invalidate_rules("blacklist", chat_id)
             await callback.answer(_plain(await at(at_id, "panel.blacklist_removed_success")))
         else:
             await callback.answer(await at(at_id, "panel.blacklist_not_found"), show_alert=True)

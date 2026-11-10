@@ -2,6 +2,7 @@ import asyncio
 import pickle
 import time
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,9 @@ class AsyncSnapshotCache:
         self._data: OrderedDict[str, Any] = OrderedDict()
         self._expiries: dict[str, float] = {}
         self._lock = asyncio.Lock()
+        self._snapshot_lock = asyncio.Lock()
+        self._loads: dict[str, asyncio.Task] = {}
+        self._volatile_keys: set[str] = set()
 
         self._hits = 0
         self._misses = 0
@@ -50,6 +54,8 @@ class AsyncSnapshotCache:
             if key in self._data:
                 self._data.move_to_end(key)
 
+            self._loads.pop(key, None)
+            self._volatile_keys.discard(key)
             self._data[key] = value
             if ttl is not None:
                 self._expiries[key] = time.time() + ttl
@@ -60,6 +66,46 @@ class AsyncSnapshotCache:
                 self._evict_oldest()
 
             return True
+
+    async def get_or_load(
+        self, key: str, loader: Callable[[], Awaitable[Any]], *, ttl: int = 60
+    ) -> Any:
+        """Share concurrent misses; loaded values are memory-only and invalidation-safe."""
+        value = await self.get(key)
+        if value is not None:
+            return value
+        async with self._lock:
+            # Another caller may have filled the key between get() and this lock.
+            expiry = self._expiries.get(key)
+            if key in self._data and (expiry is None or time.time() < expiry):
+                self._data.move_to_end(key)
+                return self._data[key]
+            task = self._loads.get(key)
+            if task is None:
+                task = asyncio.create_task(self._load_value(key, loader, ttl))
+                self._loads[key] = task
+                # Retrieve errors even if every waiting handler is cancelled.
+                task.add_done_callback(lambda done: None if done.cancelled() else done.exception())
+        return await asyncio.shield(task)
+
+    async def _load_value(self, key: str, loader: Callable[[], Awaitable[Any]], ttl: int) -> Any:
+        task = asyncio.current_task()
+        try:
+            value = await loader()
+            async with self._lock:
+                # delete/set during the load supersedes this result.
+                if self._loads.get(key) is task:
+                    self._data[key] = value
+                    self._data.move_to_end(key)
+                    self._expiries[key] = time.time() + ttl
+                    self._volatile_keys.add(key)
+                    while len(self._data) > self.max_size:
+                        self._evict_oldest()
+            return value
+        finally:
+            async with self._lock:
+                if self._loads.get(key) is task:
+                    self._loads.pop(key, None)
 
     async def setex(self, key: str, ttl: int, value: Any) -> bool:
         """Compatibility wrapper for standard cache setex."""
@@ -137,6 +183,8 @@ class AsyncSnapshotCache:
 
     def _delete_internal(self, key: str) -> bool:
         """Internal helper to delete a key without acquiring the lock."""
+        self._loads.pop(key, None)
+        self._volatile_keys.discard(key)
         self._expiries.pop(key, None)
         if key not in self._data:
             return False
@@ -149,6 +197,7 @@ class AsyncSnapshotCache:
             return
         key, _ = self._data.popitem(last=False)
         self._expiries.pop(key, None)
+        self._volatile_keys.discard(key)
         self._evictions += 1
         logger.debug(f"Cache reached {self.max_size} items. Evicted oldest (LRU): {key}")
 
@@ -176,25 +225,26 @@ class AsyncSnapshotCache:
             return len(expired_keys)
 
     async def save_snapshot(self) -> bool:
-        """Saves current cache state to disk atomically."""
-        async with self._lock:
+        """Capture under the memory lock; serialize snapshots without blocking cache traffic."""
+        async with self._snapshot_lock:
             try:
-                self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-                temp_path = self.snapshot_path.with_suffix(".tmp")
-
-                state = {
-                    "data": dict(self._data),
-                    "expiries": self._expiries.copy(),
-                    "timestamp": time.time(),
-                }
+                async with self._lock:
+                    data = {k: v for k, v in self._data.items() if k not in self._volatile_keys}
+                    state = {
+                        "data": data,
+                        "expiries": {k: v for k, v in self._expiries.items() if k in data},
+                        "timestamp": time.time(),
+                    }
 
                 def _save_io():
+                    self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+                    temp_path = self.snapshot_path.with_suffix(".tmp")
                     with open(temp_path, "wb") as f:
                         pickle.dump(state, f)
                     temp_path.replace(self.snapshot_path)
 
                 await asyncio.to_thread(_save_io)
-                logger.debug(f"Cache snapshot saved: {len(self._data)} items.")
+                logger.debug(f"Cache snapshot saved: {len(data)} items.")
                 return True
             except Exception as e:
                 logger.error(f"Failed to save cache snapshot: {e}")
@@ -214,6 +264,8 @@ class AsyncSnapshotCache:
 
                 state = await asyncio.to_thread(_load_io)
 
+                self._loads.clear()
+                self._volatile_keys.clear()
                 self._data = OrderedDict(state.get("data", {}))
                 self._expiries = state.get("expiries", {})
 

@@ -13,6 +13,7 @@ from src.core.context import AppContext
 from src.db.models import ChatAdmin, ChatSettings
 from src.utils.chat_types import normalize_chat_type
 from src.utils.i18n import at
+from src.utils.message_rules import invalidate_rules
 
 
 async def _get_or_create_settings(ctx: AppContext, chat_id: int, session) -> ChatSettings:
@@ -43,6 +44,8 @@ async def toggle_setting(ctx: AppContext, chat_id: int, field: str) -> bool:
         setattr(s, field, val)
         session.add(s)
         await session.commit()
+        if field in {"blacklistAction", "blacklistScanButtons"}:
+            await invalidate_rules("settings", chat_id)
         return val
 
 
@@ -53,6 +56,8 @@ async def update_chat_setting(ctx: AppContext, chat_id: int, field: str, value: 
         setattr(s, field, value)
         session.add(s)
         await session.commit()
+        if field in {"blacklistAction", "blacklistScanButtons"}:
+            await invalidate_rules("settings", chat_id)
 
 
 async def update_settings(ctx: AppContext, chat_id: int, **kwargs) -> ChatSettings:
@@ -69,6 +74,8 @@ async def update_settings(ctx: AppContext, chat_id: int, **kwargs) -> ChatSettin
             session.add(settings)
 
         await session.commit()
+        if {"blacklistAction", "blacklistScanButtons"}.intersection(kwargs):
+            await invalidate_rules("settings", chat_id)
         await session.refresh(settings)
         return settings
 

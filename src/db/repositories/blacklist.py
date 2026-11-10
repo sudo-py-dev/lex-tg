@@ -1,7 +1,10 @@
+import re
+
 from sqlalchemy import func, select
 
 from src.core.context import AppContext
 from src.db.models import Blacklist
+from src.utils.message_rules import detect_pattern_type, invalidate_rules
 
 
 async def add_blacklist(
@@ -13,6 +16,16 @@ async def add_blacklist(
     is_wildcard: bool = False,
 ) -> Blacklist | None:
     """Add a pattern to the blacklist for a chat. Limits to 200 entries."""
+    pattern = pattern.strip()
+    if not pattern:
+        raise ValueError("blacklist_empty_pattern")
+    if is_regex:
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise ValueError("blacklist_invalid_regex") from exc
+    else:
+        pattern = pattern.lower()
     async with ctx.db() as session:
         count_stmt = select(func.count()).select_from(Blacklist).where(Blacklist.chatId == chat_id)
         count_result = await session.execute(count_stmt)
@@ -37,6 +50,7 @@ async def add_blacklist(
         )
         session.add(blacklist)
         await session.commit()
+        await invalidate_rules("blacklist", chat_id)
         await session.refresh(blacklist)
         return blacklist
 
@@ -52,6 +66,7 @@ async def remove_blacklist(ctx: AppContext, chat_id: int, pattern: str) -> bool:
         for obj in objs:
             await session.delete(obj)
         await session.commit()
+        await invalidate_rules("blacklist", chat_id)
         return True
 
 
@@ -93,10 +108,17 @@ async def batch_add_blacklist(
         added = 0
         skipped = 0
 
-        from src.plugins.blacklist import detect_pattern_type
-
         for p in patterns:
-            p = p.lower()
+            is_regex, is_wildcard, p = detect_pattern_type(p)
+            if not p:
+                skipped += 1
+                continue
+            if is_regex:
+                try:
+                    re.compile(p)
+                except re.error:
+                    skipped += 1
+                    continue
             if p in existing_patterns:
                 skipped += 1
                 continue
@@ -105,7 +127,7 @@ async def batch_add_blacklist(
                 skipped += 1
                 continue
 
-            is_regex, is_wildcard, pattern = detect_pattern_type(p)
+            pattern = p
             obj = Blacklist(
                 chatId=chat_id,
                 pattern=pattern,
@@ -116,6 +138,9 @@ async def batch_add_blacklist(
             session.add(obj)
             current_count += 1
             added += 1
+            existing_patterns.add(pattern)
 
         await session.commit()
+        if added:
+            await invalidate_rules("blacklist", chat_id)
         return added, skipped
