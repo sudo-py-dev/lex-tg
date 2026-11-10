@@ -82,7 +82,7 @@ class SchedulerRepository:
         async with ctx.db() as session:
             settings = await session.get(ChatSettings, chat_id)
             if not settings:
-                return None, None, None, None
+                return None, None, None, None, None
 
             stmt = select(Reminder).where(Reminder.chatId == chat_id, Reminder.isActive)
             reminders = (await session.execute(stmt)).scalars().all()

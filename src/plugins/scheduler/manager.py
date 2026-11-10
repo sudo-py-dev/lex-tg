@@ -1,6 +1,6 @@
 import contextlib
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 
@@ -52,17 +52,16 @@ class SchedulerManager:
                 cls.schedule_cleaner(ctx, cleaner.chatId, tz, cleaner.cleanerRunTime)
 
             shabbat_locks = await SchedulerRepository.get_active_shabbat_locks(ctx)
-            for lock in shabbat_locks:
-                # For Shabbat, we schedule a daily sync task that calculates exact dates
-                tz = tz_map.get(lock.chatId, "UTC")
-                # But we also run an immediate sync to schedule the next upcoming events
+            if shabbat_locks:
+                # This task refreshes all chats, so schedule it once at startup.
                 from .service import sync_shabbat_times_task as sync_shabbat
 
                 ctx.scheduler.add_job(
                     sync_shabbat,
                     trigger="date",
-                    run_date=datetime.now(UTC).replace(tzinfo=None),
-                    id=f"shabbat_initial_sync:{lock.chatId}",
+                    run_date=datetime.now(UTC),
+                    id="global_shabbat_initial_sync",
+                    replace_existing=True,
                 )
 
             ctx.scheduler.add_job(
@@ -113,7 +112,7 @@ class SchedulerManager:
             ctx.scheduler.add_job(
                 sync_shabbat,
                 trigger="date",
-                run_date=datetime.now(UTC).replace(tzinfo=None),
+                run_date=datetime.now(UTC),
                 id=f"shabbat_sync:{chat_id}",
             )
 
@@ -126,13 +125,13 @@ class SchedulerManager:
     ) -> None:
         if delay_seconds <= 0:
             return
-        run_at = datetime.now(UTC).replace(tzinfo=None).timestamp() + delay_seconds
+        run_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
         job_id = f"lift_{action}:{chat_id}:{user_id}"
         try:
             ctx.scheduler.add_job(
                 _execute_lift_action,
                 trigger="date",
-                run_date=datetime.fromtimestamp(run_at, UTC),
+                run_date=run_at,
                 args=[chat_id, user_id, action],
                 id=job_id,
                 replace_existing=True,
@@ -251,15 +250,7 @@ class SchedulerManager:
         """Remove all jobs associated with a specific chat_id."""
         target_ids = []
         for job in ctx.scheduler.get_jobs():
-            if (
-                f":{chat_id}" in job.id
-                or job.id.startswith(f"chatnightlock_on:{chat_id}")
-                or job.id.startswith(f"chatnightlock_off:{chat_id}")
-                or job.id.startswith(f"shabbat_lock:{chat_id}")
-                or job.id.startswith(f"shabbat_unlock:{chat_id}")
-                or job.id.startswith(f"shabbat_sync:{chat_id}")
-                or job.id.startswith(f"cleaner:{chat_id}")
-            ):
+            if str(chat_id) in job.id.split(":")[1:]:
                 target_ids.append(job.id)
 
         for jid in target_ids:
