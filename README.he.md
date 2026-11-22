@@ -1,4 +1,4 @@
-![Lex Banner](assets/lex_bot_banner.png)
+<img src="assets/lex_bot_banner.png" alt="הבאנר של Lex-TG" width="300">
 
 # 🌐 lex-tg: מנהל הקבוצות האולטימטיבי לטלגרם
 

@@ -1,150 +1,68 @@
-![Lex Banner](assets/lex_bot_banner.png)
+# Lex-TG
 
-# 🌐 lex-tg: The Ultimate Telegram Guardian
+<img src="assets/lex_bot_banner.png" alt="Lex-TG banner" width="300">
 
-[English](#) | [עברית](README.he.md)
+Lex-TG is a Telegram bot for moderating groups and automating channel posts. Admins can configure it from a private settings panel inside Telegram.
 
-**lex-tg** is a state-of-the-art, modular Telegram group management system built for high-performance and absolute reliability. Leveraging the **MTProto** protocol and a modern asynchronous stack, lex-tg provides unparalleled control over group dynamics with a focus on speed, localization, and robust type safety.
+[עברית](README.he.md) · [Quick start](#quick-start) · [Deployment](#deployment) · [Development](#development)
 
----
+## What it does
 
-## ✨ Core Features
+- **Moderation** — Manage bans, mutes, warnings, and bulk message cleanup.
+- **Group protection** — Configure anti-flood and anti-raid rules, CAPTCHA, filters, and blacklists.
+- **Group automation** — Set welcome messages, rules, reminders, and scheduled chat locks.
+- **Channel automation** — Add reactions, signatures, links, and watermarks to posts.
+- **AI tools** — Configure the optional AI assistant and content guard from the admin panel.
 
-- 🛡️ **Advanced Moderation**: Granular control over bans, kicks, and mutes with customizable expiry.
-- 🔒 **Dynamic Locks**: Lock down text, media, stickers, URLs, or even bot commands instantly.
-- ⚡ **AI Assistant**: Native integration with Google Gemini and OpenAI for intelligent group assistance and automated responses.
-- 🌊 **Flood & Raid Control**: Intelligent rate-limiting and lockdown mechanisms to prevent group spam and malicious raids.
-- 🌍 **Deep Localization**: Full multi-lingual support powered by a smart, centralized translation engine (20+ languages).
-- 🎛️ **Premium Admin Panel**: Intuitive, callback-driven UI for effortless group configuration.
-- 🧩 **Flattened Architecture**: Highly optimized, single-file plugin system for maximum maintainability.
+## Quick start
 
----
+You’ll need Python 3.12 or newer, `uv`, a bot token from BotFather, and an API ID and hash from `my.telegram.org`.
 
-## 🛠️ Technology Stack
+From the repository root, install dependencies and create a local configuration. If you already have a `.env`, keep it and edit it in place.
 
-| Layer | Technology |
-| :--- | :--- |
-| **Core Client** | [Pyrogram](https://docs.pyrogram.org/) (Async MTProto) |
-| **Database** | [PostgreSQL](https://www.postgresql.org/) (via [asyncpg](https://github.com/MagicStack/asyncpg)) |
-| **Migrations** | [Alembic](https://alembic.sqlalchemy.org/) (Asynchronous automation) |
-| **Package Manager** | [uv](https://astral.sh/uv/) (Extreme performance & isolation) |
-| **Type Safety** | [Mypy](https://mypy-lang.org/) (Strict null-safety & guard patterns) |
-
----
-
-## 🚀 Quick Start
-
-### 1. Install `uv`
-Lex requires `uv` for lightning-fast dependency resolution and isolated environments.
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-### 2. Setup Environment
-Clone the repository and sync the dependencies:
-```bash
+```sh
 uv sync
-cp .env.example .env
+test -f .env || cp .env.example .env
+mkdir -p data sessions logs
 ```
-> [!IMPORTANT]
-> Ensure you fill in your `API_ID`, `API_HASH`, and `BOT_TOKEN` in the `.env` file. You can also customize the `BOT_NAME` in `src/config.py` (default: `lex-tg`).
 
-### 3. Run the Bot
-```bash
+Set these values in `.env`.
+
+| Variable | Value |
+| --- | --- |
+| `API_ID` and `API_HASH` | Telegram API credentials from `my.telegram.org`. |
+| `BOT_TOKEN` | The token issued by BotFather. |
+| `OWNER_ID` | Your numeric Telegram user ID. |
+| `DATABASE_URL` | Use `sqlite+aiosqlite:///data/bot.sqlite3` for a persistent local database, or enter your PostgreSQL connection URL. |
+
+Keep your `.env` and Telegram session files private. Then start the bot.
+
+```sh
 uv run bot
 ```
 
----
+In Telegram, open the bot privately and send `/start`. Add it to your group or channel and grant the permissions needed for the features you plan to use. In a group, send `/settings` to open the private admin panel. You can also send `/settings` privately to choose a managed chat, or `/help` to browse commands.
 
-## 🛳️ Deployment (Running 24/7)
+## Deployment
 
-### Option 1: Railway (Recommended)
-The easiest way to deploy Lex.
-1. Click **New Project** on Railway.
-2. Select your repository.
-3. Add a **PostgreSQL** database.
-4. Follow the [RAILWAY_GUIDE.md](RAILWAY_GUIDE.md) for environment variables and volumes.
+**Docker Compose.** Set the Telegram and owner values in `.env`. Set `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB`, then make sure `DATABASE_URL` uses the same credentials and the Compose database host `db`. Start the services and follow the bot logs.
 
-### Option 2: Docker (Self-Hosted)
-Ensure you have Docker and Docker Compose installed on your VPS.
-
-1. **Setup**:
-   ```bash
-   bash scripts/deploy_vps.sh
-   ```
-2. **Manage**:
-   - View logs: `docker compose logs -f`
-   - Stop bot: `docker compose down`
-   - Start bot: `docker compose up -d`
-
-### Option 2: Systemd (Native Linux Service)
-If you prefer running without Docker:
-
-1. Copy the service file:
-   ```bash
-   sudo cp lex-tg.service /etc/systemd/system/
-   ```
-2. Enable and start:
-   ```bash
-   sudo systemctl daemon-reload
-   sudo systemctl enable lex-tg
-   sudo systemctl start lex-tg
-   ```
-3. View logs: `journalctl -u lex-tg -f`
-
----
-
-## 🏗️ Development & Quality Assurance
-
-We maintain rigorous standards for code quality and reliability.
-
-### 🔍 Static Analysis
-```bash
-uv run lint         # Ultra-fast linting with Ruff
-uv run fmt          # Automatic code formatting
-uv run typecheck    # Strict type-checking with MyPy
+```sh
+docker compose up -d
+docker compose logs -f bot
 ```
 
-### 🌐 Localization Workflow
-Our smart translation tool ensures all languages stay in sync:
-```bash
-uv run translate    # Sync all locales from en.json
-```
+**Railway.** Create a project with a PostgreSQL service and configure the bot’s environment variables and persistent storage. [Railway deployment guide](RAILWAY_GUIDE.md)
 
-### 🧪 Automated Testing
-```bash
-uv run test         # Comprehensive pytest-asyncio suite
-```
+## Development
 
-### 🗄️ Database Migrations
-Always ensure your database schema is up-to-date:
-```bash
-uv run migrate      # Upgrade to the latest schema (alembic)
-```
+| Task | Command |
+| --- | --- |
+| Run tests | `uv run pytest -q` |
+| Lint | `uv run ruff check .` |
+| Format | `uv run ruff format .` |
+| Type-check | `uv run mypy src/` |
+| Apply database migrations | `uv run alembic upgrade head` |
+| Run the locale sync tool | `uv run translate` |
 
----
-
-## 🏛️ Project Architecture
-
-```text
-├── src/
-│   ├── core/           # Bot initialization and core client
-│   ├── plugins/        # Flattened modular feature sets
-│   │   ├── admin_panel/ # UI-driven configuration engine
-│   │   ├── ai_assistant/ # LLM integration layer
-│   │   ├── scheduler/   # Background task management
-│   │   └── ...         # 30+ flattened plugin files
-│   ├── repository/     # Data access layer (SQLAlchemy Models)
-│   ├── locales/        # Internationalization schemas (.json)
-│   └── utils/          # Hardened helpers (Permissions, Cache, i18n)
-├── scripts/            # DevOps and localization automation
-└── tests/              # Comprehensive test suites
-```
-
----
-
-## 💎 Project Status: High-Performance Hardening
-Lex has been fully migrated to a **pure Python caching layer**, removing standard external dependencies like Redis to minimize latency and simplify deployment. We maintain **100% type-coverage** for all core modules.
-
-> [!NOTE]
-> Contributions are welcome! Please ensure all pull requests pass `uv run lint` and `uv run typecheck` before submission.
+Telegram handlers live in [`src/plugins/`](src/plugins), the settings UI in [`src/plugins/admin_panel/`](src/plugins/admin_panel), and database models and repositories in [`src/db/`](src/db). Translations are in [`src/locales/`](src/locales), and automated checks are in [`tests/`](tests).
