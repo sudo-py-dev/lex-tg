@@ -1,5 +1,6 @@
 from sqlalchemy import select
 
+from src.config import config
 from src.core.context import AppContext
 from src.db.models import GlobalBan, SudoUser
 
@@ -56,12 +57,15 @@ async def get_all_gbans(ctx: AppContext) -> list[GlobalBan]:
 
 async def add_sudo(ctx: AppContext, user_id: int, added_by: int) -> SudoUser:
     """Add a user to the sudoers list."""
+    if added_by != config.OWNER_ID:
+        raise PermissionError("Only the bot owner can grant global moderation privileges")
     async with ctx.db() as session:
         user = await session.get(SudoUser, user_id)
-        if user:
-            return user
-        user = SudoUser(userId=user_id, addedBy=added_by)
-        session.add(user)
+        if user is None:
+            user = SudoUser(userId=user_id, addedBy=added_by)
+            session.add(user)
+        else:
+            user.addedBy = added_by
         await session.commit()
         await session.refresh(user)
         return user
@@ -71,4 +75,4 @@ async def is_sudo(ctx: AppContext, user_id: int) -> bool:
     """Check if a user is in the sudoers list."""
     async with ctx.db() as session:
         user = await session.get(SudoUser, user_id)
-        return user is not None
+        return user is not None and user.addedBy == config.OWNER_ID

@@ -89,6 +89,20 @@ async def test_persistence(cache):
     assert await new_cache.get("p2") == {"complex": "data"}
 
 
+async def test_signed_snapshot_rejects_modified_payload(tmp_path):
+    snapshot = tmp_path / "cache.snapshot"
+    cache = AsyncSnapshotCache(snapshot, snapshot_key=b"test-signing-key")
+    await cache.set("state", "original")
+    assert await cache.save_snapshot()
+
+    restored = AsyncSnapshotCache(snapshot, snapshot_key=b"test-signing-key")
+    assert await restored.load_snapshot()
+    assert await restored.get("state") == "original"
+    snapshot.write_bytes(snapshot.read_bytes().replace(b"original", b"modified"))
+    assert not await restored.load_snapshot()
+    assert await restored.get("state") == "original"
+
+
 @pytest.mark.asyncio
 async def test_stats(cache):
     await cache.set("k1", 1)

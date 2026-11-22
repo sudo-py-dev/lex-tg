@@ -6,6 +6,7 @@ from pyrogram import Client, filters
 from pyrogram.errors import BadRequest, FloodWait, Forbidden, RPCError
 from pyrogram.types import Message, User
 
+from src.config import config
 from src.core.bot import bot
 from src.core.context import get_context
 from src.core.plugin import Plugin, register
@@ -57,11 +58,11 @@ async def ungban_handler(client: Client, message: Message, target_user: User) ->
         )
 
 
-@bot.on_message(filters.command("addsudo") & filters.private)
+@bot.on_message(filters.command("addsudo") & filters.private & filters.user(config.OWNER_ID))
 @safe_handler
 @resolve_target
 async def addsudo_handler(client: Client, message: Message, target_user: User) -> None:
-    if message.from_user:
+    if message.from_user and message.from_user.id == config.OWNER_ID:
         await add_sudo(get_context(), target_user.id, message.from_user.id)
         await message.reply(await at(message.chat.id, "gban.addsudo", mention=target_user.mention))
 

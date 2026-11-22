@@ -1,5 +1,8 @@
 import asyncio
-import pickle
+import hmac
+import json
+import math
+import tempfile
 import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
@@ -8,6 +11,8 @@ from typing import Any
 
 from loguru import logger
 
+MAX_SNAPSHOT_BYTES = 16 * 1024 * 1024
+
 
 class AsyncSnapshotCache:
     """
@@ -15,10 +20,17 @@ class AsyncSnapshotCache:
     Uses collections.OrderedDict for O(1) LRU eviction and memory bounds.
     """
 
-    def __init__(self, snapshot_path: str = "data/cache_snapshot.pkl", max_size: int = 10000):
+    def __init__(
+        self,
+        snapshot_path: str | Path = "data/cache.snapshot",
+        max_size: int = 10000,
+        *,
+        snapshot_key: bytes | None = None,
+    ):
         if max_size < 1:
             raise ValueError("max_size must be positive")
         self.snapshot_path = Path(snapshot_path)
+        self._snapshot_key = snapshot_key
         self.max_size = max_size
         self._data: OrderedDict[str, Any] = OrderedDict()
         self._expiries: dict[str, float] = {}
@@ -240,15 +252,26 @@ class AsyncSnapshotCache:
                     state = {
                         "data": data,
                         "expiries": {k: v for k, v in self._expiries.items() if k in data},
-                        "timestamp": time.time(),
                     }
 
                 def _save_io():
+                    payload = json.dumps(state, allow_nan=False).encode()
+                    if self._snapshot_key is not None:
+                        signature = hmac.digest(self._snapshot_key, payload, "sha256")
+                        payload = signature + payload
+                    if len(payload) > MAX_SNAPSHOT_BYTES:
+                        raise ValueError("Cache snapshot is too large")
                     self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-                    temp_path = self.snapshot_path.with_suffix(".tmp")
-                    with open(temp_path, "wb") as f:
-                        pickle.dump(state, f)
-                    temp_path.replace(self.snapshot_path)
+                    with tempfile.NamedTemporaryFile(
+                        dir=self.snapshot_path.parent, delete=False
+                    ) as f:
+                        temp_path = Path(f.name)
+                        try:
+                            f.write(payload)
+                            f.close()
+                            temp_path.replace(self.snapshot_path)
+                        finally:
+                            temp_path.unlink(missing_ok=True)
 
                 await asyncio.to_thread(_save_io)
                 logger.debug(f"Cache snapshot saved: {len(data)} items.")
@@ -262,19 +285,40 @@ class AsyncSnapshotCache:
         if not self.snapshot_path.exists():
             return False
 
-        async with self._lock:
+        async with self._snapshot_lock, self._lock:
             try:
 
                 def _load_io():
                     with open(self.snapshot_path, "rb") as f:
-                        return pickle.load(f)
+                        payload = f.read(MAX_SNAPSHOT_BYTES + 1)
+                    if len(payload) > MAX_SNAPSHOT_BYTES:
+                        raise ValueError("Cache snapshot is too large")
+                    if self._snapshot_key is not None:
+                        signature, payload = payload[:32], payload[32:]
+                        expected = hmac.digest(self._snapshot_key, payload, "sha256")
+                        if not hmac.compare_digest(signature, expected):
+                            raise ValueError("Invalid cache snapshot signature")
+                    state = json.loads(payload)
+                    if not isinstance(state, dict):
+                        raise ValueError("Invalid cache snapshot")
+                    data, expiries = state.get("data"), state.get("expiries")
+                    if not isinstance(data, dict) or not isinstance(expiries, dict):
+                        raise ValueError("Invalid cache snapshot entries")
+                    if any(
+                        key not in data
+                        or type(expiry) not in (int, float)
+                        or not math.isfinite(expiry)
+                        for key, expiry in expiries.items()
+                    ):
+                        raise ValueError("Invalid cache snapshot expiry")
+                    return data, expiries
 
-                state = await asyncio.to_thread(_load_io)
+                data, expiries = await asyncio.to_thread(_load_io)
 
                 self._loads.clear()
                 self._volatile_keys.clear()
-                self._data = OrderedDict(state.get("data", {}))
-                self._expiries = state.get("expiries", {})
+                self._data = OrderedDict(data)
+                self._expiries = expiries
 
                 now = time.time()
                 expired_keys = [k for k, exp in self._expiries.items() if now >= exp]
@@ -299,5 +343,8 @@ def get_cache() -> AsyncSnapshotCache:
     """Returns the global AsyncSnapshotCache instance."""
     global _cache
     if _cache is None:
-        _cache = AsyncSnapshotCache()
+        from src.config import config
+
+        snapshot_key = hmac.digest(config.BOT_TOKEN.encode(), b"lex-tg cache snapshot v1", "sha256")
+        _cache = AsyncSnapshotCache(snapshot_key=snapshot_key)
     return _cache

@@ -45,7 +45,9 @@ In Telegram, open the bot privately and send `/start`. Add it to your group or c
 
 ## Deployment
 
-**Docker Compose.** Set the Telegram and owner values in `.env`. Set `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB`, then make sure `DATABASE_URL` uses the same credentials and the Compose database host `db`. Start the services and follow the bot logs.
+**Docker Compose.** Set the Telegram and owner values in `.env`. Generate distinct passwords for `POSTGRES_PASSWORD` and `BOT_DB_PASSWORD`. Set `DATABASE_URL` to `postgresql+asyncpg://lex_bot:<url-encoded-bot-password>@db:5432/botdb`, adjusting the database name if you set `POSTGRES_DB`. Start the services and follow the bot logs.
+
+For an existing `pgdata` directory, PostgreSQL skips the initialization script. Keep the existing bootstrap username and database name in `.env`. Before switching the bot connection URL, use a PostgreSQL administrator session to rotate the bootstrap password, create the separate `lex_bot` login, grant it `USAGE, CREATE` on the bot schema, and transfer ownership of the app's existing tables and sequences to it. Preserve the data directory during the upgrade.
 
 ```sh
 docker compose up -d

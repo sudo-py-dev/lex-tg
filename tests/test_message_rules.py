@@ -270,8 +270,9 @@ async def test_stop_filter_handles_multiword_keywords(rule_context, mocker, comm
 
 
 @pytest.mark.parametrize("foreign_chat", [False, True])
+@pytest.mark.parametrize("can_ban", [False, True])
 async def test_blacklist_panel_delete_invalidates_only_authorized_chat(
-    rule_context, mocker, foreign_chat
+    rule_context, mocker, foreign_chat, can_ban
 ):
     from src.plugins.admin_panel.decorators import AdminPanelContext
     from src.plugins.admin_panel.handlers.callbacks import moderation
@@ -280,6 +281,7 @@ async def test_blacklist_panel_delete_invalidates_only_authorized_chat(
     entry = await blocks.add_blacklist(rule_context, target_chat, "blocked")
     await get_block_rules(rule_context, target_chat)
     mocker.patch.object(moderation, "blacklist_kb", new_callable=AsyncMock)
+    mocker.patch.object(moderation, "can_manage_blacklist", return_value=can_ban)
     mocker.patch.object(moderation, "at", new_callable=AsyncMock, return_value="Result")
     callback = SimpleNamespace(
         matches=[SimpleNamespace(group=lambda n: str(entry.id) if n == 1 else "0")],
@@ -289,7 +291,7 @@ async def test_blacklist_panel_delete_invalidates_only_authorized_chat(
     )
     ap_ctx = AdminPanelContext(chat_id=-123, at_id=123, ctx=rule_context, is_pm=True)
     await moderation.on_blacklist_remove(object(), callback, ap_ctx)
-    assert bool(await get_block_rules(rule_context, target_chat)) == foreign_chat
+    assert bool(await get_block_rules(rule_context, target_chat)) == (foreign_chat or not can_ban)
 
 
 async def test_cold_burst_shares_only_three_queries(rule_context, db_engine):

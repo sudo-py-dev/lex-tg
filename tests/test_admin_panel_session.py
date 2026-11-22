@@ -79,6 +79,7 @@ async def test_cancel_panel_input_preserves_return_route(
     mocker.patch.object(panel_input, "get_cache", return_value=cache)
     mocker.patch.object(inputs, "at", side_effect=lambda _, key: key)
     mocker.patch.object(inputs, "resolve_chat_type", return_value=chat_type)
+    mocker.patch.object(inputs, "can_manage_blacklist", return_value=True)
     edit = mocker.patch.object(inputs, "safe_edit")
     callback = SimpleNamespace(
         from_user=SimpleNamespace(id=123),

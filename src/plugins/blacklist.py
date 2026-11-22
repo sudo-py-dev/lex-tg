@@ -22,7 +22,7 @@ from src.utils.message_rules import (
     match_block,
 )
 from src.utils.moderation import execute_moderation_action, resolve_sender
-from src.utils.permissions import Permission
+from src.utils.permissions import Permission, can_manage_blacklist
 
 
 class BlacklistPlugin(Plugin):
@@ -133,6 +133,9 @@ async def blacklist_input_handler(client: Client, message: Message) -> None:
         str(message.text or message.caption or "").strip(),
     )
     if not p:
+        return
+    if not await can_manage_blacklist(client, cid, uid):
+        await message.reply(await at(uid, "error.admin_no_permission"))
         return
     is_r, is_w, p = detect_pattern_type(p)
     if is_r:

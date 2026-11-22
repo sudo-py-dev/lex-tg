@@ -1,6 +1,8 @@
 import json
 
 from pyrogram import Client
+from pyrogram.enums import ChatMemberStatus
+from pyrogram.errors import RPCError
 from pyrogram.types import ChatPermissions
 
 from .admin_cache import (
@@ -81,6 +83,19 @@ async def check_user_permission(
 ) -> bool:
     """Check specific user privilege. Redirects to unified 3-tier cache."""
     return await fast_check_user_permission(client, chat_id, user_id, permission)
+
+
+async def can_manage_blacklist(client: Client, chat_id: int, user_id: int) -> bool:
+    """Check the actor's current Telegram ban rights before changing blacklist rules."""
+    try:
+        member = await client.get_chat_member(chat_id, user_id)
+    except RPCError:
+        return False
+    return member.status == ChatMemberStatus.OWNER or (
+        member.status == ChatMemberStatus.ADMINISTRATOR
+        and member.privileges is not None
+        and member.privileges.can_restrict_members
+    )
 
 
 async def has_permission(client: Client, chat_id: int | None, permission: Permission) -> bool:

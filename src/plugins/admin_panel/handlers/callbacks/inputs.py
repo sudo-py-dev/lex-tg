@@ -15,6 +15,7 @@ from src.plugins.admin_panel.validation import is_setting_allowed
 from src.plugins.ai_assistant.repository import AIRepository
 from src.utils.i18n import at
 from src.utils.input import cancel_input_capture, capture_next_input
+from src.utils.permissions import can_manage_blacklist
 
 
 @bot.on_callback_query(filters.regex(r"^panel:input:(\w+):?(-?\d+)?$"))
@@ -26,6 +27,10 @@ async def on_panel_input(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelC
     ctx = ap_ctx.ctx
     field = callback.matches[0].group(1)
     target_id_str = callback.matches[0].group(2)
+
+    if field == "blacklistInput" and not await can_manage_blacklist(_, chat_id, user_id):
+        await callback.answer(await at(ap_ctx.at_id, "error.admin_no_permission"), show_alert=True)
+        return
 
     logger.debug(f"Admin Panel: input action triggered for field {field} by user {user_id}")
 

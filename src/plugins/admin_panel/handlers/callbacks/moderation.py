@@ -31,7 +31,7 @@ from src.utils.actions import (
     cycle_action,
 )
 from src.utils.i18n import at
-from src.utils.permissions import Permission, check_user_permission
+from src.utils.permissions import Permission, can_manage_blacklist, check_user_permission
 
 
 @bot.on_callback_query(filters.regex(r"^panel:langblock:?(\d+)?$"))
@@ -83,6 +83,10 @@ async def on_blacklist(
 @admin_panel_context
 @safe_callback
 async def on_blacklist_remove(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
+    if not await can_manage_blacklist(_, ap_ctx.chat_id, callback.from_user.id):
+        await callback.answer(await at(ap_ctx.at_id, "error.admin_no_permission"), show_alert=True)
+        return
+
     bid = int(callback.matches[0].group(1))
     page = int(callback.matches[0].group(2))
     chat_id = ap_ctx.chat_id
@@ -112,6 +116,10 @@ async def on_blacklist_remove(_: Client, callback: CallbackQuery, ap_ctx: AdminP
 @admin_panel_context
 @safe_callback
 async def on_cycle_blacklist_action(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
+    if not await can_manage_blacklist(_, ap_ctx.chat_id, callback.from_user.id):
+        await callback.answer(await at(ap_ctx.at_id, "error.admin_no_permission"), show_alert=True)
+        return
+
     page = int(callback.matches[0].group(1))
     chat_id = ap_ctx.chat_id
     at_id = _panel_lang_id(ap_ctx.is_pm, callback.from_user.id, chat_id)
@@ -145,6 +153,10 @@ async def on_cycle_blacklist_action(_: Client, callback: CallbackQuery, ap_ctx: 
 async def on_toggle_blacklist_buttons(
     _: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext
 ):
+    if not await can_manage_blacklist(_, ap_ctx.chat_id, callback.from_user.id):
+        await callback.answer(await at(ap_ctx.at_id, "error.admin_no_permission"), show_alert=True)
+        return
+
     page = int(callback.matches[0].group(1))
     chat_id = ap_ctx.chat_id
     at_id = _panel_lang_id(ap_ctx.is_pm, callback.from_user.id, chat_id)
@@ -689,9 +701,7 @@ async def on_blacklist_blocks(_: Client, callback: CallbackQuery, ap_ctx: AdminP
 @admin_panel_context
 @safe_callback
 async def on_blacklist_inject(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
-    if not await check_user_permission(
-        _, ap_ctx.chat_id, callback.from_user.id, Permission.CAN_BAN
-    ):
+    if not await can_manage_blacklist(_, ap_ctx.chat_id, callback.from_user.id):
         await callback.answer(await at(ap_ctx.at_id, "error.admin_no_permission"), show_alert=True)
         return
 

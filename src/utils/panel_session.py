@@ -9,4 +9,8 @@ async def bind_panel(
 
 
 async def get_panel_session(user_id: int, message_id: int) -> tuple[int | None, int | None]:
-    return await get_cache().get(f"panel_target:{user_id}:{message_id}") or (None, None)
+    chat_id, picker_page = await get_cache().get(f"panel_target:{user_id}:{message_id}") or (
+        None,
+        None,
+    )
+    return chat_id, picker_page
