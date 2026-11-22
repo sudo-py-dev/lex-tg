@@ -26,6 +26,8 @@ test -f .env || cp .env.example .env
 mkdir -p data sessions logs
 ```
 
+For native Telegram encryption acceleration, use `uv sync --extra crypto`. Building this extra from source requires a C compiler and the development headers for your Python version, including `Python.h`.
+
 Set these values in `.env`.
 
 | Variable | Value |
@@ -34,6 +36,8 @@ Set these values in `.env`.
 | `BOT_TOKEN` | The token issued by BotFather. |
 | `OWNER_ID` | Your numeric Telegram user ID. |
 | `DATABASE_URL` | Use `sqlite+aiosqlite:///data/bot.sqlite3` for a persistent local database, or enter your PostgreSQL connection URL. |
+
+Global maintenance jobs use UTC by default. Set `SCHEDULER_TIMEZONE` to an IANA timezone such as `Asia/Jerusalem` to change that schedule. Chat-specific jobs use the timezones set in their respective chats.
 
 Keep your `.env` and Telegram session files private. Then start the bot.
 

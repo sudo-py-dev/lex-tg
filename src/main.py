@@ -6,6 +6,7 @@ import sqlite3
 import sys
 import time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -89,6 +90,7 @@ async def main() -> None:
     await cache.load_snapshot()
 
     scheduler = AsyncIOScheduler(
+        timezone=ZoneInfo(config.SCHEDULER_TIMEZONE),
         job_defaults={
             "misfire_grace_time": 60,
             "coalesce": True,

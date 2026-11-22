@@ -9,13 +9,13 @@ WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1
 
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-install-project --no-dev
+RUN uv sync --frozen --no-install-project --no-dev --extra crypto
 
 COPY src ./src
 COPY README.md ./
 COPY alembic.ini ./
 COPY alembic ./alembic
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra crypto
 
 FROM python:3.12-slim-bookworm AS runtime-base
 
