@@ -34,6 +34,7 @@ async def night_lock_input_handler(client: Client, message: Message) -> None:
         await message.reply(await at(user_id, "panel.input_invalid_time"))
         return
 
+    scheduled = True
     async with ctx.db() as session:
         lock = await session.get(ChatNightLock, chat_id)
         if not lock:
@@ -48,7 +49,7 @@ async def night_lock_input_handler(client: Client, message: Message) -> None:
         if lock.isEnabled:
             from src.plugins.scheduler.manager import SchedulerManager
 
-            await SchedulerManager.sync_group(ctx, chat_id)
+            scheduled = await SchedulerManager.sync_group(ctx, chat_id)
 
     from src.plugins.admin_panel.handlers.keyboards import chatnightlock_menu_kb
 
@@ -63,7 +64,9 @@ async def night_lock_input_handler(client: Client, message: Message) -> None:
         state["prompt_msg_id"],
         text,
         kb,
-        success_text=await at(user_id, "panel.input_success"),
+        success_text=await at(
+            user_id, "panel.input_success" if scheduled else "panel.schedule_refresh_failed"
+        ),
     )
 
 
@@ -88,7 +91,8 @@ async def reminder_text_input_handler(client: Client, message: Message) -> None:
         [
             [
                 InlineKeyboardButton(
-                    await at(user_id, "common.btn_cancel"), callback_data="panel:cancel_input"
+                    await at(user_id, "common.btn_cancel"),
+                    callback_data="panel:cancel_input:reminders",
                 )
             ]
         ]
@@ -120,24 +124,27 @@ async def reminder_time_input_handler(client: Client, message: Message) -> None:
 
     r = get_cache()
     data_str = await r.get(f"temp_rem_data:{user_id}")
-    if data_str:
-        data = json.loads(data_str)
-        async with ctx.db() as session:
-            rem = Reminder(
-                chatId=chat_id,
-                messageType=data["type"],
-                text=data.get("text"),
-                fileId=data.get("file_id"),
-                additionalData=data.get("additional_data"),
-                sendTime=str(value),
-            )
-            session.add(rem)
-            await session.commit()
+    if not data_str:
+        await message.reply(await at(user_id, "panel.input_inactive"))
+        return
 
-            from src.plugins.scheduler.manager import SchedulerManager
+    data = json.loads(data_str)
+    async with ctx.db() as session:
+        rem = Reminder(
+            chatId=chat_id,
+            messageType=data["type"],
+            text=data.get("text"),
+            fileId=data.get("file_id"),
+            additionalData=data.get("additional_data"),
+            sendTime=str(value),
+        )
+        session.add(rem)
+        await session.commit()
 
-            await SchedulerManager.sync_group(ctx, chat_id)
-        await r.delete(f"temp_rem_data:{user_id}")
+        from src.plugins.scheduler.manager import SchedulerManager
+
+        scheduled = await SchedulerManager.sync_group(ctx, chat_id)
+    await r.delete(f"temp_rem_data:{user_id}")
 
     from src.plugins.admin_panel.handlers.keyboards import reminders_menu_kb
 
@@ -150,5 +157,7 @@ async def reminder_time_input_handler(client: Client, message: Message) -> None:
         state["prompt_msg_id"],
         await at(user_id, "panel.reminder_text"),
         kb,
-        success_text=await at(user_id, "panel.input_success"),
+        success_text=await at(
+            user_id, "panel.input_success" if scheduled else "panel.schedule_refresh_failed"
+        ),
     )

@@ -22,6 +22,10 @@ from src.utils.i18n import at
 from src.utils.media import parse_watermark_config
 
 
+class PanelRefreshError(Exception):
+    """Telegram rejected an edit and the panel needs to be reopened."""
+
+
 def _panel_lang_id(is_pm: bool, user_id: int, chat_id: int) -> int:
     return user_id if is_pm else chat_id
 
@@ -45,7 +49,8 @@ def _next_ai_provider(current_provider: str) -> str:
 def safe_callback(func):
     """
     Decorator to safely handle common Telegram RPC errors in callback handlers.
-    Suppresses MessageNotModified, QueryIdInvalid, and automatically handles FloodWait.
+    A handler may have already written settings when Telegram rejects its response.
+    Never replay the handler to recover a failed response.
     """
 
     @functools.wraps(func)
@@ -58,11 +63,13 @@ def safe_callback(func):
         except ContinuePropagation:
             # Re-raise to let other handlers process this event
             raise
-        except FloodWait as e:
-            # Auto-retry on flood wait
-            await asyncio.sleep(int(e.value) + 1)
-            return await wrapper(client, callback, *args, **kwargs)
-        except (RPCError, Exception) as e:
+        except PanelRefreshError:
+            logger.warning("Could not refresh the panel in {}", func.__name__)
+            with contextlib.suppress(RPCError):
+                await callback.answer(
+                    await at(callback.from_user.id, "panel.refresh_reopen"), show_alert=True
+                )
+        except Exception as e:
             # Log other errors with full traceback and answer with a generic error if possible
             logger.opt(exception=True).error(f"Error in {func.__name__}: {e}")
             with contextlib.suppress(Exception):
@@ -81,11 +88,24 @@ async def safe_edit(event: CallbackQuery | Message, text: str = None, reply_mark
 
     msg = event.message if not isinstance(event, Message) else event
 
-    with contextlib.suppress(MessageNotModified, RPCError):
+    async def edit() -> None:
         if text:
             await msg.edit_text(text, reply_markup=reply_markup, **kwargs)
         else:
             await msg.edit_reply_markup(reply_markup=reply_markup)
+
+    try:
+        try:
+            await edit()
+        except FloodWait as error:
+            if error.value > 3:
+                raise
+            await asyncio.sleep(error.value + 1)
+            await edit()
+    except MessageNotModified:
+        return
+    except RPCError as error:
+        raise PanelRefreshError from error
 
 
 async def _render_ai_panel(

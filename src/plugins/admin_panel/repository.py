@@ -2,6 +2,7 @@ from src.core.context import AppContext
 from src.db.repositories.chats import (
     get_chat_info,
     get_chat_settings,
+    get_user_admin_chat_page,
     get_user_admin_chats,
     resolve_chat_type,
     set_chat_active_status,
@@ -14,6 +15,7 @@ from src.db.repositories.chats import (
 __all__ = [
     "get_chat_info",
     "get_chat_settings",
+    "get_user_admin_chat_page",
     "get_user_admin_chats",
     "resolve_chat_type",
     "set_chat_active_status",

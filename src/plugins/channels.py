@@ -18,7 +18,6 @@ from pyrogram import Client, filters
 from pyrogram.enums import ButtonStyle, ParseMode
 from pyrogram.errors import BadRequest, FloodWait, Forbidden, RPCError
 from pyrogram.types import (
-    InlineKeyboardButton,
     InlineKeyboardMarkup,
     InputMediaPhoto,
     InputMediaVideo,
@@ -33,6 +32,7 @@ from src.db.repositories.chats import (
     get_chat_settings,
     update_chat_setting,
 )
+from src.utils.channel_content import ChannelContentPlan, build_content_plan
 from src.utils.decorators import safe_handler
 from src.utils.input import (
     finalize_input_capture,
@@ -62,13 +62,6 @@ class WatermarkOptions:
     video_enabled: bool
     video_quality: str
     video_motion: str
-
-
-@dataclass(slots=True)
-class ChannelContentPlan:
-    is_media: bool
-    is_caption_host: bool
-    target_content: str | None
 
 
 class ChannelsPlugin(Plugin):
@@ -164,7 +157,7 @@ class ChannelsPlugin(Plugin):
             settings.signatureEnabled,
         )
 
-        kb = self._build_buttons_keyboard(settings.buttons)
+        kb = plan.reply_markup
         if kb:
             logger.debug(
                 f"[channels] Keyboard built message={message.id}: {len(kb.inline_keyboard)} rows"
@@ -203,7 +196,7 @@ class ChannelsPlugin(Plugin):
         if not processed and (plan.target_content is not None or kb is not None):
             logger.debug(f"[channels] Attempting signature/button update message={message.id}")
             await self._handle_signature_and_buttons(
-                message, settings, plan.target_content, plan.is_media, reply_markup=kb
+                message, plan.target_content, plan.is_media, reply_markup=kb
             )
         else:
             logger.debug(
@@ -243,9 +236,10 @@ class ChannelsPlugin(Plugin):
                 async with self._processing_lock:
                     trigger = min(group, key=lambda m: m.id)
                     caption_host = next((m for m in group if m.caption), None) or trigger
-                    final_caption = self._calculate_target_content(
-                        settings, caption_host, is_media=True, is_caption_host=True
-                    ) or (caption_host.caption.html if caption_host.caption else "")
+                    plan = build_content_plan(settings, caption_host, is_caption_host=True)
+                    final_caption = plan.target_content or getattr(
+                        caption_host.caption, "html", caption_host.caption or ""
+                    )
 
                     photo_items = self._select_album_photos(group, caption_host)
                     if not photo_items:
@@ -254,7 +248,7 @@ class ChannelsPlugin(Plugin):
                         f"[channels] Album watermark media_group={media_group_id} photos_to_edit={len(photo_items)}"
                     )
 
-                    kb = self._build_buttons_keyboard(settings.buttons)
+                    kb = plan.reply_markup
                     for item in photo_items:
                         item_caption = final_caption if item.id == caption_host.id else None
                         item_kb = kb if item.id == caption_host.id else None
@@ -302,52 +296,7 @@ class ChannelsPlugin(Plugin):
         self, settings: ChatSettings, message: Message
     ) -> ChannelContentPlan:
         """Build once, then route message through watermark/signature handlers."""
-        is_media = bool(
-            message.photo
-            or message.video
-            or message.document
-            or message.animation
-            or message.audio
-            or message.voice
-            or message.video_note
-        )
-        is_caption_host = await self._is_caption_host(message)
-        target_content = self._calculate_target_content(
-            settings, message, is_media, is_caption_host
-        )
-        logger.debug(
-            f"[channels] PLAN message={message.id}: host={is_caption_host} media={is_media} sig_len={len(target_content) if target_content else 0}"
-        )
-        return ChannelContentPlan(
-            is_media=is_media, is_caption_host=is_caption_host, target_content=target_content
-        )
-
-    def _calculate_target_content(
-        self, settings: ChatSettings, message: Message, is_media: bool, is_caption_host: bool
-    ) -> str | None:
-        """
-        Calculates the new text/caption for the message including the signature.
-        Returns None if no update is required.
-        """
-        if not (settings.signatureEnabled and settings.signatureText and is_caption_host):
-            return None
-
-        current = ""
-        if is_media:
-            if message.caption:
-                current = getattr(message.caption, "html", message.caption)
-        else:
-            if message.text:
-                current = getattr(message.text, "html", message.text)
-        limit = 1024 if is_media else 4096
-
-        sig_text = settings.signatureText
-        sig = f"\n\n{sig_text}"
-
-        if sig_text not in current and len(current) + len(sig) <= limit:
-            return f"{current}{sig}"
-
-        return None
+        return build_content_plan(settings, message, await self._is_caption_host(message))
 
     async def _handle_reactions(self, settings: ChatSettings, message: Message) -> None:
         """
@@ -397,7 +346,6 @@ class ChannelsPlugin(Plugin):
     async def _handle_signature_and_buttons(
         self,
         message: Message,
-        settings: ChatSettings,
         new_content: str | None,
         is_media: bool,
         reply_markup: InlineKeyboardMarkup | None = None,
@@ -438,39 +386,6 @@ class ChannelsPlugin(Plugin):
             logger.error(f"RPC error updating message {message.id}: {e}")
         except Exception as e:
             logger.exception(f"Unexpected error updating message {message.id}: {e}")
-
-    def _build_buttons_keyboard(self, buttons_json: str | None) -> InlineKeyboardMarkup | None:
-        if not buttons_json:
-            return None
-        try:
-            rows = json.loads(buttons_json)
-            if not rows or not isinstance(rows, list):
-                return None
-
-            from src.utils.actions import ButtonStyle
-
-            keyboard = []
-            for row in rows:
-                kb_row = []
-                for btn in row:
-                    text = btn.get("text", "Button")
-                    url = btn.get("url")
-                    style_str = btn.get("style", "default")
-
-                    try:
-                        style = ButtonStyle(style_str)
-                    except (ValueError, TypeError):
-                        style = ButtonStyle.DEFAULT
-
-                    if url:
-                        kb_row.append(InlineKeyboardButton(text, url=url, style=style))
-                if kb_row:
-                    keyboard.append(kb_row)
-
-            return InlineKeyboardMarkup(keyboard) if keyboard else None
-        except Exception as e:
-            logger.error(f"Error building buttons keyboard: {e}")
-            return None
 
     async def _handle_watermarking(
         self,

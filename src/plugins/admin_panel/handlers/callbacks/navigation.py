@@ -1,5 +1,4 @@
 from pyrogram import Client, filters
-from pyrogram.enums import ChatType
 from pyrogram.types import CallbackQuery
 
 from src.core.bot import bot
@@ -11,10 +10,10 @@ from src.plugins.admin_panel.handlers.callbacks.common import (
     safe_callback,
     safe_edit,
 )
+from src.plugins.admin_panel.handlers.commands import render_dashboard
 from src.plugins.admin_panel.handlers.keyboards import (
     automation_category_kb,
     greetings_category_kb,
-    main_menu_kb,
     moderation_category_kb,
     security_category_kb,
     settings_category_kb,
@@ -26,27 +25,15 @@ from src.utils.i18n import at
 @admin_panel_context
 @safe_callback
 async def on_panel_main(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
-    user_id = callback.from_user.id
-    chat_id = ap_ctx.chat_id
-    at_id = _panel_lang_id(ap_ctx.is_pm, user_id, chat_id)
-    ctx = ap_ctx.ctx
-
-    if ap_ctx.chat_type == ChatType.CHANNEL:
-        from src.plugins.admin_panel.handlers.keyboards import channel_settings_kb
-
-        text_key = "panel.main_text_channel"
-        kb = await channel_settings_kb(ctx, chat_id, user_id)
-    else:
-        text_key = "panel.main_text"
-        kb = await main_menu_kb(
-            chat_id, user_id=user_id if ap_ctx.is_pm else None, chat_type=ap_ctx.chat_type
-        )
-
-    await safe_edit(
-        callback,
-        await at(at_id, text_key, title=ap_ctx.chat_title),
-        reply_markup=kb,
+    text, kb = await render_dashboard(
+        ap_ctx.ctx,
+        ap_ctx.chat_id,
+        callback.from_user.id if ap_ctx.is_pm else None,
+        ap_ctx.chat_type,
+        ap_ctx.chat_title,
+        picker_page=ap_ctx.picker_page,
     )
+    await safe_edit(callback, text, reply_markup=kb)
     await callback.answer()
 
 

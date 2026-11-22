@@ -120,3 +120,46 @@ async def test_sync_unknown_group_is_a_noop(db_engine):
     ctx.db = async_sessionmaker(db_engine, expire_on_commit=False)
     await SchedulerManager.sync_group(ctx, -99999)
     assert ctx.scheduler.get_jobs() == []
+
+
+async def test_invalid_schedule_keeps_existing_job(mocker):
+    ctx = context()
+    chat_id = -123
+    SchedulerManager.schedule_cleaner(ctx, chat_id, "UTC", "04:00")
+    original = ctx.scheduler.get_job(f"cleaner:{chat_id}")
+    mocker.patch.object(
+        SchedulerRepository,
+        "get_group_data",
+        return_value=("Asia/Jerusalem", [], None, None, SimpleNamespace(cleanerRunTime="xx")),
+    )
+
+    assert await SchedulerManager.sync_group(ctx, chat_id) is False
+    assert ctx.scheduler.get_job(f"cleaner:{chat_id}") is original
+
+
+async def test_group_sync_replaces_timezone_and_preserves_timed_moderation(mocker):
+    ctx = context()
+    ctx.scheduler.start(paused=True)
+    chat_id = -123
+    try:
+        SchedulerManager.schedule_reminder(ctx, chat_id, 1, "04:00", "UTC")
+        SchedulerManager.schedule_reminder(ctx, chat_id, 2, "04:00", "UTC")
+        SchedulerManager.schedule_timed_action(ctx, chat_id, 456, "mute", 60)
+        mocker.patch.object(
+            SchedulerRepository,
+            "get_group_data",
+            return_value=(
+                "Asia/Jerusalem",
+                [SimpleNamespace(id=1, sendTime="4:00")],
+                None,
+                None,
+                None,
+            ),
+        )
+
+        assert await SchedulerManager.sync_group(ctx, chat_id) is True
+        assert str(ctx.scheduler.get_job("reminder:1").trigger.timezone) == "Asia/Jerusalem"
+        assert ctx.scheduler.get_job("reminder:2") is None
+        assert ctx.scheduler.get_job(f"lift_mute:{chat_id}:456") is not None
+    finally:
+        ctx.scheduler.shutdown(wait=False)

@@ -156,6 +156,9 @@ async def sync_admins_from_telegram(client: Client, chat_id: int, force: bool = 
 
             # Update global list cache
             await cache.set(CacheKeys.admins(chat_id), json.dumps(list(admin_ids)), ttl=_TTL)
+            await cache.set(
+                f"admins_last_sync:{chat_id}", datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+            )
             logger.debug(f"Admin cache/DB refreshed for chat {chat_id}: {len(admin_ids)} admins")
             return admin_ids
         except Exception as e:

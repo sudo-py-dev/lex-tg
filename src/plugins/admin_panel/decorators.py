@@ -14,6 +14,7 @@ from pyrogram.types import CallbackQuery, Message
 
 from src.core.context import AppContext, get_context
 from src.utils.i18n import at
+from src.utils.panel_session import get_panel_session
 from src.utils.permissions import is_admin
 
 from .repository import get_active_chat, get_chat_info
@@ -27,6 +28,7 @@ class AdminPanelContext:
     is_pm: bool
     chat_type: ChatType | None = None
     chat_title: str | None = None
+    picker_page: int | None = None
 
 
 def admin_panel_context(func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
@@ -56,11 +58,16 @@ def admin_panel_context(func: Callable[..., Awaitable[None]]) -> Callable[..., A
 
         ctx = get_context()
 
+        picker_page = None
         if not is_pm:
             chat_id = message.chat.id
-            chat_type, chat_title = await get_chat_info(ctx, chat_id)
+            chat_type, chat_title = await get_chat_info(ctx, chat_id, refresh=False)
         else:
-            chat_id, chat_type_str = await get_active_chat(ctx, user_id)
+            if isinstance(event, CallbackQuery):
+                chat_id, picker_page = await get_panel_session(user_id, message.id)
+                chat_type_str = None
+            else:
+                chat_id, chat_type_str = await get_active_chat(ctx, user_id)
             if not chat_id:
                 logger.debug(f"Admin Panel: NO ACTIVE CONNECTION found for user {user_id} in PM.")
                 from .handlers.keyboards import my_chats_menu_kb
@@ -77,12 +84,12 @@ def admin_panel_context(func: Callable[..., Awaitable[None]]) -> Callable[..., A
 
             # Resolve type and title
             logger.debug(f"Admin Panel: Resolving chat info for {chat_id}...")
-            chat_type_obj, chat_title = await get_chat_info(ctx, chat_id)
+            chat_type_obj, chat_title = await get_chat_info(ctx, chat_id, refresh=False)
             chat_type = chat_type_obj
 
             # If the stored type was missing or changed, update it in the DB session/connection
             chat_type_name = chat_type.name.lower()
-            if not chat_type_str or chat_type_str != chat_type_name:
+            if isinstance(event, Message) and chat_type_str != chat_type_name:
                 from .repository import set_active_chat as update_conn
 
                 await update_conn(ctx, user_id, chat_id, chat_type=chat_type_name)
@@ -115,6 +122,7 @@ def admin_panel_context(func: Callable[..., Awaitable[None]]) -> Callable[..., A
             is_pm=is_pm,
             chat_type=chat_type,
             chat_title=chat_title,
+            picker_page=picker_page,
         )
 
         await func(client, event, ap_ctx, *args, **kwargs)

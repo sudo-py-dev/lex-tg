@@ -738,3 +738,33 @@ class TestBuildWorkPlanIsNew:
 
         if plan:
             assert plan[0]["is_new"] is False
+
+
+def test_admin_templates_render_with_current_panel_arguments():
+    from src.utils.i18n import list_locales, t
+
+    watermark_fields = (
+        "image_status",
+        "video_status",
+        "has_image",
+        "location",
+        "opacity",
+        "size",
+        "style",
+        "video_quality",
+        "video_motion",
+        "video_limit_note",
+        "color",
+        "text",
+    )
+    raid_fields = ("status", "threshold", "window", "time", "actiontime", "action")
+    for locale in list_locales():
+        for key, fields in (
+            ("panel.channel_watermark_text", watermark_fields),
+            ("panel.raid_text", raid_fields),
+        ):
+            rendered = t(locale, key, **dict.fromkeys(fields, "sample"))
+            assert rendered != key and "sample" in rendered and "{" not in rendered, (locale, key)
+
+        welcome = t(locale, "panel.input_prompt_welcomeText")
+        assert "{mention}" in welcome and "T_PH_" not in welcome, locale

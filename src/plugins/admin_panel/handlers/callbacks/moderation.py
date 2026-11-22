@@ -65,11 +65,14 @@ async def on_entityblock(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelC
 @bot.on_callback_query(filters.regex(r"^panel:blacklist:?(\d+)?$"))
 @admin_panel_context
 @safe_callback
-async def on_blacklist(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
+async def on_blacklist(
+    _: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext, *, page: int | None = None
+):
     user_id = callback.from_user.id
     chat_id = ap_ctx.chat_id
     at_id = _panel_lang_id(ap_ctx.is_pm, user_id, chat_id)
-    page = int(callback.matches[0].group(1)) if callback.matches[0].group(1) else 0
+    if page is None:
+        page = int(callback.matches[0].group(1) or 0)
 
     kb = await blacklist_kb(ap_ctx.ctx, chat_id, page, user_id=user_id if ap_ctx.is_pm else None)
     await safe_edit(callback, await at(at_id, "panel.blacklist_text"), reply_markup=kb)

@@ -64,7 +64,8 @@ async def on_add_filter(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelCo
             [
                 [
                     InlineKeyboardButton(
-                        await at(at_id, "common.btn_cancel"), callback_data=f"panel:filters:{page}"
+                        await at(at_id, "common.btn_cancel"),
+                        callback_data=f"panel:cancel_input:filters:{page}",
                     )
                 ]
             ]
@@ -112,7 +113,7 @@ async def on_edit_filter(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelC
                     [
                         InlineKeyboardButton(
                             await at(at_id, "common.btn_cancel"),
-                            callback_data=f"panel:filters:{page}",
+                            callback_data=f"panel:cancel_input:filters:{page}",
                         )
                     ]
                 ]

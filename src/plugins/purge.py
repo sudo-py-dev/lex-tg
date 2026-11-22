@@ -1,16 +1,21 @@
 import asyncio
 import contextlib
+from uuid import uuid4
 
 from loguru import logger
 from pyrogram import Client, filters
+from pyrogram.enums import ChatMemberStatus, ChatType
 from pyrogram.errors import FloodWait, Forbidden, RPCError
-from pyrogram.types import Message
+from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from src.core.bot import bot
+from src.core.context import get_context
 from src.core.plugin import Plugin, register
+from src.db.repositories.chats import get_chat_info
 from src.utils.decorators import admin_permission_required, safe_handler
 from src.utils.i18n import at
 from src.utils.input import finalize_input_capture, is_waiting_for_input
+from src.utils.local_cache import get_cache
 from src.utils.permissions import Permission, has_permission
 
 
@@ -116,53 +121,123 @@ async def purge_messages_input_handler(client: Client, message: Message) -> None
     state = message.input_state
     chat_id = state["chat_id"]
     user_id = message.from_user.id
-    value = message.text
-
-    if not str(value).isdigit() or int(value) < 1:
-        await message.reply(await at(user_id, "panel.input_invalid_number"))
+    value = (message.text or "").strip()
+    if not value.isascii() or not value.isdecimal() or len(value) > 4:
+        await message.reply(await at(user_id, "panel.purge_invalid_count"))
         return
 
     count = int(value)
+    if not 1 <= count <= 1000:
+        await message.reply(await at(user_id, "panel.purge_invalid_count"))
+        return
 
-    # Start background purge task
-    async def do_purge():
-        try:
-            dummy = await client.send_message(chat_id, await at(chat_id, "panel.purge_in_progress"))
-            top_id = dummy.id
-            await asyncio.sleep(2)
-            await dummy.delete()
-
-            for i in range(top_id, top_id - count - 1, -100):
-                batch_ids = list(range(i, max(i - 100, top_id - count - 1), -1))
-                try:
-                    await client.delete_messages(chat_id, batch_ids)
-                except FloodWait as e:
-                    await asyncio.sleep(e.value + 1)
-                    with contextlib.suppress(Exception):
-                        await client.delete_messages(chat_id, batch_ids)
-                except (Forbidden, RPCError):
-                    pass
-                await asyncio.sleep(0.5)
-        except Exception as e:
-            logger.error(f"Background purge error in {chat_id}: {e}")
-
-    asyncio.create_task(do_purge())
-
-    from src.plugins.admin_panel.handlers.keyboards import moderation_category_kb
-
-    kb = await moderation_category_kb(chat_id, user_id=user_id)
-
-    text = await at(user_id, "panel.moderation_text")
-
+    _, title = await get_chat_info(get_context(), chat_id)
+    token = state.get("capture_id") or uuid4().hex
+    cache = get_cache()
+    if not await cache.delete_if_value(f"panel_input:{user_id}", message.input_capture_value):
+        return
+    await cache.set(f"purge_confirm:{user_id}:{token}", (chat_id, count), ttl=300)
+    kb = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    await at(user_id, "panel.purge_confirm_button", count=count),
+                    callback_data=f"panel:purge_confirm:yes:{token}",
+                ),
+                InlineKeyboardButton(
+                    await at(user_id, "common.btn_cancel"),
+                    callback_data=f"panel:purge_confirm:no:{token}",
+                ),
+            ]
+        ]
+    )
     await finalize_input_capture(
         client,
         message,
         user_id,
         state["prompt_msg_id"],
-        text,
+        await at(user_id, "panel.purge_confirm_text", title=title, count=count),
         kb,
-        success_text=await at(user_id, "panel.input_success"),
     )
+
+
+@bot.on_callback_query(filters.regex(r"^panel:purge_confirm:(yes|no):([0-9a-f]{32})$"))
+@safe_handler
+async def confirm_panel_purge(client: Client, callback: CallbackQuery) -> None:
+    if not callback.message or callback.message.chat.type != ChatType.PRIVATE:
+        await callback.answer()
+        return
+
+    user_id = callback.from_user.id
+    choice, token = callback.matches[0].groups()
+    cache = get_cache()
+    key = f"purge_confirm:{user_id}:{token}"
+    pending = await cache.get(key)
+    if pending is None or not await cache.delete_if_value(key, pending):
+        await callback.answer(await at(user_id, "panel.input_inactive"), show_alert=True)
+        return
+
+    chat_id, count = pending
+    back = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    await at(user_id, "panel.btn_back"), callback_data="panel:category:moderation"
+                )
+            ]
+        ]
+    )
+    if choice == "no":
+        await callback.answer()
+        await callback.message.edit_text(
+            await at(user_id, "panel.input_cancelled"), reply_markup=back
+        )
+        return
+
+    member = await client.get_chat_member(chat_id, user_id)
+    can_delete = member.status == ChatMemberStatus.OWNER or (
+        member.status == ChatMemberStatus.ADMINISTRATOR
+        and member.privileges is not None
+        and member.privileges.can_delete_messages
+    )
+    if not can_delete or not await has_permission(client, chat_id, Permission.CAN_DELETE):
+        await callback.answer(await at(user_id, "error.admin_no_permission"), show_alert=True)
+        return
+
+    await callback.answer()
+    with contextlib.suppress(RPCError):
+        await callback.message.edit_text(await at(user_id, "panel.purge_in_progress"))
+
+    accepted = 0
+    try:
+        marker = await client.send_message(chat_id, await at(chat_id, "panel.purge_in_progress"))
+        low = max(1, marker.id - count)
+        with contextlib.suppress(RPCError):
+            await marker.delete()
+        for top in range(marker.id - 1, low - 1, -100):
+            batch = list(range(top, max(low - 1, top - 100), -1))
+            try:
+                await client.delete_messages(chat_id, batch)
+            except FloodWait as error:
+                if error.value > 5:
+                    continue
+                await asyncio.sleep(error.value + 1)
+                try:
+                    await client.delete_messages(chat_id, batch)
+                except RPCError:
+                    continue
+            except RPCError:
+                continue
+            accepted += len(batch)
+    except RPCError:
+        logger.exception("Panel purge could not start for chat {}", chat_id)
+
+    result = "done" if accepted == count else "partial" if accepted else "failed"
+    text = await at(user_id, f"panel.purge_result_{result}", accepted=accepted, count=count)
+    try:
+        await callback.message.edit_text(text, reply_markup=back)
+    except RPCError:
+        await client.send_message(user_id, text)
 
 
 register(PurgePlugin())

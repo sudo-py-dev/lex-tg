@@ -5,29 +5,30 @@ from pyrogram.types import CallbackQuery
 from src.core.bot import bot
 from src.core.context import get_context
 from src.plugins.admin_panel.handlers.callbacks.common import (
-    _panel_lang_id,
     _plain,
     safe_callback,
     safe_edit,
 )
+from src.plugins.admin_panel.handlers.commands import send_admin_dashboard
 from src.plugins.admin_panel.handlers.keyboards import (
     channels_menu_kb,
-    main_menu_kb,
     my_chats_menu_kb,
     my_groups_kb,
 )
 from src.plugins.admin_panel.repository import (
     get_chat_info,
-    get_chat_settings,
     set_active_chat,
 )
 from src.utils.i18n import at
+from src.utils.input import cancel_input_capture
 
 
 @bot.on_callback_query(filters.regex(r"^panel:close$"))
 @safe_callback
 async def on_panel_close(_: Client, callback: CallbackQuery):
     if callback.message:
+        if callback.message.chat.type == ChatType.PRIVATE:
+            await cancel_input_capture(callback.from_user.id, callback.message.id)
         await callback.message.delete()
     await callback.answer()
 
@@ -44,27 +45,27 @@ async def on_my_chats(_: Client, callback: CallbackQuery):
     await callback.answer()
 
 
-@bot.on_callback_query(filters.regex(r"^panel:list_groups$"))
+@bot.on_callback_query(filters.regex(r"^panel:list_groups(?::(\d+))?$"))
 @safe_callback
 async def on_list_groups(client: Client, callback: CallbackQuery):
     user_id = callback.from_user.id
     ctx = get_context()
-    kb = await my_groups_kb(ctx, client, user_id)
+    kb = await my_groups_kb(ctx, client, user_id, int(callback.matches[0].group(1) or 0))
     await safe_edit(callback, await at(user_id, "panel.groups_list_title"), reply_markup=kb)
     await callback.answer()
 
 
-@bot.on_callback_query(filters.regex(r"^panel:list_channels$"))
+@bot.on_callback_query(filters.regex(r"^panel:list_channels(?::(\d+))?$"))
 @safe_callback
 async def on_list_channels(client: Client, callback: CallbackQuery):
     user_id = callback.from_user.id
     ctx = get_context()
-    kb = await channels_menu_kb(ctx, client, user_id)
+    kb = await channels_menu_kb(ctx, client, user_id, int(callback.matches[0].group(1) or 0))
     await safe_edit(callback, await at(user_id, "panel.channels_list_title"), reply_markup=kb)
     await callback.answer()
 
 
-@bot.on_callback_query(filters.regex(r"^panel:select_chat:(-?\d+)$"))
+@bot.on_callback_query(filters.regex(r"^panel:select_chat:(-?\d+)(?::(\d+))?$"))
 @safe_callback
 async def on_select_chat(client: Client, callback: CallbackQuery):
     ctx = get_context()
@@ -77,24 +78,15 @@ async def on_select_chat(client: Client, callback: CallbackQuery):
         await callback.answer(await at(user_id, "error.no_membership_admin"), show_alert=True)
         return
 
-    is_pm = callback.message.chat.type == ChatType.PRIVATE
-    at_id = _panel_lang_id(is_pm, user_id, new_chat_id)
-    chat_type, chat_title = await get_chat_info(ctx, new_chat_id)
+    chat_type, _ = await get_chat_info(ctx, new_chat_id)
     await set_active_chat(ctx, user_id, new_chat_id, chat_type=chat_type.name.lower())
-
-    await safe_edit(
-        callback,
-        await at(at_id, "panel.main_text", user_id=user_id, title=chat_title),
-        reply_markup=await main_menu_kb(
-            new_chat_id,
-            user_id=user_id if is_pm else None,
-            chat_type=chat_type,
-        ),
+    await callback.answer()
+    await send_admin_dashboard(
+        client, user_id, new_chat_id, picker_page=int(callback.matches[0].group(2) or 0)
     )
-    await callback.answer(_plain(await at(at_id, "panel.switch_chat", user_id=user_id)))
 
 
-@bot.on_callback_query(filters.regex(r"^panel:select_channel:(-?\d+)$"))
+@bot.on_callback_query(filters.regex(r"^panel:select_channel:(-?\d+)(?::(\d+))?$"))
 @safe_callback
 async def on_select_channel(client: Client, callback: CallbackQuery):
     ctx = get_context()
@@ -107,24 +99,16 @@ async def on_select_channel(client: Client, callback: CallbackQuery):
         await callback.answer(await at(user_id, "error.no_membership_admin"), show_alert=True)
         return
 
-    from src.plugins.admin_panel.handlers.keyboards import channel_settings_kb
-
     chat_type, _ = await get_chat_info(ctx, channel_id)
     if chat_type != ChatType.CHANNEL:
         await on_select_chat(client, callback)
         return
 
     await set_active_chat(ctx, user_id, channel_id, chat_type="channel")
-    s = await get_chat_settings(ctx, channel_id)
-    title = s.title or f"Channel {channel_id}"
-    kb = await channel_settings_kb(ctx, channel_id, user_id)
-
-    await safe_edit(
-        callback,
-        await at(user_id, "panel.channel_settings_text", title=title, id=channel_id),
-        reply_markup=kb,
+    await callback.answer()
+    await send_admin_dashboard(
+        client, user_id, channel_id, picker_page=int(callback.matches[0].group(2) or 0)
     )
-    await callback.answer(_plain(await at(user_id, "panel.switch_chat", user_id=user_id)))
 
 
 @bot.on_callback_query(filters.regex(r"^panel:language:user:?(\d+)?$"))

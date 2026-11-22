@@ -1,6 +1,7 @@
 import contextlib
 
 from pyrogram import Client, filters
+from pyrogram.errors import MessageNotModified
 from pyrogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -26,62 +27,53 @@ class HelpPlugin(Plugin):
         pass
 
 
-HELP_CATEGORIES = [
-    ("about", "help.btn_about"),
-    ("admin", "help.btn_admin"),
-    ("antiflood", "help.btn_antiflood"),
-    ("antiraid", "help.btn_antiraid"),
-    ("approval", "help.btn_approval"),
-    ("bans", "help.btn_bans"),
-    ("blacklist", "help.btn_blacklist"),
-    ("captcha", "help.btn_captcha"),
-    ("cleancmd", "help.btn_cleancmd"),
-    ("cleansvc", "help.btn_cleansvc"),
-    ("connections", "help.btn_connections"),
-    ("disabling", "help.btn_disabling"),
-    ("federations", "help.btn_federations"),
-    ("filters", "help.btn_filters"),
-    ("formatting", "help.btn_formatting"),
-    ("greetings", "help.btn_greetings"),
-    ("impexp", "help.btn_impexp"),
-    ("languages", "help.btn_languages"),
-    ("locks", "help.btn_locks"),
-    ("logging", "help.btn_logging"),
-    ("misc", "help.btn_misc"),
-    ("notes", "help.btn_notes"),
-    ("pin", "help.btn_pin"),
-    ("privacy", "help.btn_privacy"),
-    ("purges", "help.btn_purges"),
-    ("reports", "help.btn_reports"),
-    ("rules", "help.btn_rules"),
-    ("topics", "help.btn_topics"),
-]
+HELP_SECTIONS = {
+    "moderation": ("admin", "bans", "purges", "reports", "approval", "federations", "pin"),
+    "protection": ("antiflood", "antiraid", "blacklist", "captcha", "locks"),
+    "setup": (
+        "connections",
+        "greetings",
+        "languages",
+        "logging",
+        "rules",
+        "topics",
+        "cleancmd",
+        "cleansvc",
+        "disabling",
+        "impexp",
+    ),
+    "reference": ("about", "filters", "formatting", "misc", "notes", "privacy"),
+}
 
 
-async def get_help_kb(chat_id: int) -> InlineKeyboardMarkup:
-    """Generate the 3-column grid of help categories."""
-    buttons = []
-    row = []
-    for cat_id, label_key in HELP_CATEGORIES:
-        row.append(
-            InlineKeyboardButton(await at(chat_id, label_key), callback_data=f"help:cat:{cat_id}")
-        )
-        if len(row) == 3:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-
-    buttons.append(
-        [InlineKeyboardButton(await at(chat_id, "help.back_btn"), callback_data="help:start")]
-    )
+async def get_help_kb(chat_id: int, section: str | None = None) -> InlineKeyboardMarkup:
+    if section is None:
+        buttons = [
+            [
+                InlineKeyboardButton(
+                    await at(chat_id, f"help.section_{name}"), callback_data=f"help:section:{name}"
+                )
+            ]
+            for name in HELP_SECTIONS
+        ]
+        back = "help:start"
+    else:
+        topics = [
+            InlineKeyboardButton(
+                await at(chat_id, f"help.btn_{topic}"), callback_data=f"help:cat:{topic}"
+            )
+            for topic in HELP_SECTIONS[section]
+        ]
+        buttons = [topics[i : i + 2] for i in range(0, len(topics), 2)]
+        back = "help:main"
+    buttons.append([InlineKeyboardButton(await at(chat_id, "help.back_btn"), callback_data=back)])
     return InlineKeyboardMarkup(buttons)
 
 
 @bot.on_message(filters.command("help") & filters.private)
 @safe_handler
 async def help_handler(client: Client, message: Message) -> None:
-    """Display the main help menu with the 3-column grid."""
+    """Display help sections in a private chat."""
     chat_id = message.chat.id
     await message.reply(
         await at(chat_id, "help.main_text"), reply_markup=await get_help_kb(chat_id)
@@ -92,41 +84,60 @@ async def help_handler(client: Client, message: Message) -> None:
 @safe_handler
 async def help_callback_handler(client: Client, callback_query: CallbackQuery) -> None:
     """Handle navigation within the help menu."""
+    await callback_query.answer()
+    message = callback_query.message
+    if message is None:
+        return
     data = callback_query.data
-    chat_id = callback_query.message.chat.id
+    chat_id = message.chat.id
 
     if data == "help:start":
         from src.plugins.admin import send_start_message
 
-        await send_start_message(client, callback_query.message, edit=True)
+        with contextlib.suppress(MessageNotModified):
+            await send_start_message(client, message, edit=True)
         return
 
-    if data == "help:main":
-        with contextlib.suppress(Exception):
-            await callback_query.message.edit_text(
-                await at(chat_id, "help.main_text"), reply_markup=await get_help_kb(chat_id)
+    if data == "help:main" or data.startswith("help:section:"):
+        section = data.removeprefix("help:section:") if data.startswith("help:section:") else None
+        if section is not None and section not in HELP_SECTIONS:
+            return
+        heading = f"help.section_{section}" if section else "help.main_text"
+        with contextlib.suppress(MessageNotModified):
+            await message.edit_text(
+                await at(chat_id, heading), reply_markup=await get_help_kb(chat_id, section)
             )
         return
 
-    if data.startswith("help:cat:"):
-        cat_id = data.replace("help:cat:", "")
-
-        if cat_id.startswith("about"):
-            text = await get_about_text(chat_id)
-            options = LinkPreviewOptions(is_disabled=True)
-            back_target = "help:start" if cat_id.endswith(":start") else "help:main"
+    if data == "help:setting:flood":
+        topic = "antiflood"
+        back = "panel:flood"
+    elif data.startswith("help:cat:"):
+        topic = data.removeprefix("help:cat:")
+        if topic == "about:start":
+            topic, back = "about", "help:start"
         else:
-            text = await at(chat_id, f"help.{cat_id}_text")
-            options = None
-            back_target = "help:main"
-
-        kb = InlineKeyboardMarkup(
-            [[InlineKeyboardButton(await at(chat_id, "help.back_btn"), callback_data=back_target)]]
-        )
-        with contextlib.suppress(Exception):
-            await callback_query.message.edit_text(
-                text, reply_markup=kb, link_preview_options=options
+            section = next(
+                (name for name, topics in HELP_SECTIONS.items() if topic in topics), None
             )
+            if section is None:
+                return
+            back = f"help:section:{section}"
+    else:
+        return
+
+    text = (
+        await get_about_text(chat_id)
+        if topic == "about"
+        else await at(chat_id, f"help.{topic}_text")
+    )
+    kb = InlineKeyboardMarkup(
+        [[InlineKeyboardButton(await at(chat_id, "help.back_btn"), callback_data=back)]]
+    )
+    with contextlib.suppress(MessageNotModified):
+        await message.edit_text(
+            text, reply_markup=kb, link_preview_options=LinkPreviewOptions(is_disabled=True)
+        )
 
 
 register(HelpPlugin())

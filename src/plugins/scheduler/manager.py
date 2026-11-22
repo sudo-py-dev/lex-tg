@@ -1,7 +1,11 @@
 import contextlib
 import re
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
+from apscheduler.jobstores.base import JobLookupError
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
 from loguru import logger
 
 from src.core.context import AppContext
@@ -20,7 +24,7 @@ from .service import (
 
 
 class SchedulerManager:
-    TIME_PATTERN = re.compile(r"^([01][0-9]|2[0-3]):([0-5][0-9])$")
+    TIME_PATTERN = re.compile(r"^([01]?[0-9]|2[0-3]):([0-5][0-9])$")
 
     @classmethod
     async def sync_all(cls, ctx: AppContext) -> None:
@@ -88,36 +92,82 @@ class SchedulerManager:
             logger.error("Scheduler: Fatal error during sync_all: {}", e)
 
     @classmethod
-    async def sync_group(cls, ctx: AppContext, chat_id: int) -> None:
-        """Reload all jobs for a specific chat (e.g., after timezone or settings change)."""
+    async def sync_group(cls, ctx: AppContext, chat_id: int) -> bool:
+        """Reconcile a group's recurring jobs without clearing jobs before validation."""
         tz, reminders, night_lock, shabbat_lock, cleaner = await SchedulerRepository.get_group_data(
             ctx, chat_id
         )
         if tz is None:
-            return
+            return True
 
-        cls.clear_group_jobs(ctx, chat_id)
+        scheduler = ctx.scheduler
+        try:
+            timezone = ZoneInfo(tz)
+            desired = {}
 
-        if reminders:
-            for rem in reminders:
-                cls.schedule_reminder(ctx, chat_id, rem.id, rem.sendTime, tz)
+            def add_cron(job_id, task, time_str, args):
+                hour, minute = cls._parse_time(time_str)
+                if hour is None:
+                    raise ValueError(f"Invalid time for job {job_id}")
+                desired[job_id] = (
+                    task,
+                    CronTrigger(hour=hour, minute=minute, timezone=timezone),
+                    args,
+                )
 
-        if night_lock:
-            cls.schedule_night_lock(ctx, chat_id, night_lock.startTime, night_lock.endTime, tz)
+            for reminder in reminders or ():
+                add_cron(
+                    f"reminder:{reminder.id}",
+                    execute_reminder,
+                    reminder.sendTime,
+                    [chat_id, reminder.id],
+                )
+            if night_lock:
+                add_cron(
+                    f"chatnightlock_on:{chat_id}", apply_night_lock, night_lock.startTime, [chat_id]
+                )
+                add_cron(
+                    f"chatnightlock_off:{chat_id}", lift_night_lock, night_lock.endTime, [chat_id]
+                )
+            if cleaner:
+                add_cron(
+                    f"cleaner:{chat_id}",
+                    run_group_cleaner,
+                    cleaner.cleanerRunTime or "04:00",
+                    [chat_id],
+                )
+            if shabbat_lock:
+                desired[f"shabbat_sync:{chat_id}"] = (
+                    sync_shabbat_times_task,
+                    DateTrigger(run_date=datetime.now(UTC)),
+                    [],
+                )
 
-        if shabbat_lock:
-            from .service import sync_shabbat_times_task as sync_shabbat
+            stale = []
+            for job in scheduler.get_jobs():
+                kind, _, target = job.id.partition(":")
+                belongs = (
+                    kind == "reminder"
+                    and bool(job.args)
+                    and job.args[0] == chat_id
+                    or kind in {"cleaner", "chatnightlock_on", "chatnightlock_off", "shabbat_sync"}
+                    and target == str(chat_id)
+                    or kind in {"shabbat_lock", "shabbat_unlock"}
+                    and not shabbat_lock
+                    and target.partition(":")[0] == str(chat_id)
+                )
+                if belongs and job.id not in desired:
+                    stale.append(job.id)
 
-            # Schedule immediate sync to set up upcoming events
-            ctx.scheduler.add_job(
-                sync_shabbat,
-                trigger="date",
-                run_date=datetime.now(UTC),
-                id=f"shabbat_sync:{chat_id}",
-            )
-
-        if cleaner:
-            cls.schedule_cleaner(ctx, chat_id, tz, cleaner.cleanerRunTime)
+            for job_id, (task, trigger, args) in desired.items():
+                scheduler.add_job(task, trigger, args=args, id=job_id, replace_existing=True)
+            for job_id in stale:
+                with contextlib.suppress(JobLookupError):
+                    scheduler.remove_job(job_id)
+        except Exception:
+            logger.exception("Could not reconcile scheduled jobs for chat {}", chat_id)
+            return False
+        return True
 
     @classmethod
     def schedule_timed_action(

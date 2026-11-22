@@ -1,9 +1,11 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.db.repositories.chats import get_chat_settings, update_chat_setting
 from src.plugins.channels import ChannelsPlugin
+from src.utils.channel_content import build_content_plan, calculate_target_content
 from tests.factories import ChannelSettingsFactory
 
 
@@ -66,7 +68,6 @@ async def test_reaction_logic_all_mode():
 @pytest.mark.asyncio
 async def test_signature_length_limit():
     """Test that signatures are not added if they exceed the limit."""
-    plugin = ChannelsPlugin()
     settings = MagicMock()
     settings.signatureEnabled = True
     settings.signatureText = "My Awesome Bot"
@@ -77,9 +78,7 @@ async def test_signature_length_limit():
     message.caption = None
 
     # Calculate target (should be None because 4090 + 16 > 4096)
-    result = plugin._calculate_target_content(
-        settings, message, is_media=False, is_caption_host=True
-    )
+    result = calculate_target_content(settings, message, is_media=False, is_caption_host=True)
     assert result is None
 
 
@@ -142,3 +141,57 @@ async def test_album_non_host_skips_watermarking(mock_ctx):
         await plugin._process_message(AsyncMock(), message)
 
         mock_water.assert_not_called()
+
+
+def test_album_signature_and_buttons_only_attach_to_caption_host():
+    settings = MagicMock(
+        signatureEnabled=True,
+        signatureText="Visit us",
+        buttons='[[{"text":"Read more","url":"https://example.com"}]]',
+    )
+    photo = SimpleNamespace(
+        photo=object(),
+        video=None,
+        document=None,
+        animation=None,
+        audio=None,
+        voice=None,
+        video_note=None,
+        caption="Photo caption",
+        text=None,
+    )
+    host = build_content_plan(settings, photo, is_caption_host=True)
+    assert host.target_content == "Photo caption\n\nVisit us"
+    assert host.reply_markup.inline_keyboard[0][0].text == "Read more"
+    other = build_content_plan(settings, photo, is_caption_host=False)
+    assert other.target_content is None
+    assert other.reply_markup is None
+
+
+async def test_settings_repository_serializes_concurrent_first_writes(tmp_path):
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from src.db import Base
+    from src.db.repositories.chats import toggle_setting, update_settings
+
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'settings.sqlite3'}")
+    ctx = SimpleNamespace(db=async_sessionmaker(engine, expire_on_commit=False))
+    try:
+        async with engine.begin() as connection:
+            await connection.run_sync(Base.metadata.create_all)
+        values = await asyncio.gather(
+            toggle_setting(ctx, -301, "reactionsEnabled"),
+            toggle_setting(ctx, -301, "reactionsEnabled"),
+            update_chat_setting(ctx, -301, "title", "Concurrent changes"),
+        )
+        assert set(values[:2]) == {True, False}
+        settings = await get_chat_settings(ctx, -301)
+        assert settings.reactionsEnabled is False
+        assert settings.title == "Concurrent changes"
+        for chat_id in (-301, -302):
+            with pytest.raises(ValueError, match="Unknown or immutable"):
+                await update_settings(ctx, chat_id, unsupportedField=True)
+    finally:
+        await engine.dispose()

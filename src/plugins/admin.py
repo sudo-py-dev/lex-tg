@@ -336,7 +336,7 @@ async def cleaner_time_input_handler(client: Client, message: Message) -> None:
 
         from src.plugins.scheduler.manager import SchedulerManager
 
-        await SchedulerManager.sync_group(ctx, chat_id)
+        scheduled = await SchedulerManager.sync_group(ctx, chat_id)
 
     from src.plugins.admin_panel.handlers.keyboards import cleaner_menu_kb
 
@@ -363,7 +363,9 @@ async def cleaner_time_input_handler(client: Client, message: Message) -> None:
         state["prompt_msg_id"],
         text,
         kb,
-        success_text=await at(user_id, "panel.input_success"),
+        success_text=await at(
+            user_id, "panel.input_success" if scheduled else "panel.schedule_refresh_failed"
+        ),
     )
 
 

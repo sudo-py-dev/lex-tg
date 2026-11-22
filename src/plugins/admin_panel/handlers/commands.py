@@ -3,8 +3,9 @@ from pyrogram.enums import ChatType
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from src.core.bot import bot
-from src.core.context import get_context
+from src.core.context import AppContext, get_context
 from src.utils.i18n import at
+from src.utils.panel_session import bind_panel
 from src.utils.permissions import is_admin
 
 from ..decorators import AdminPanelContext, admin_panel_context
@@ -63,6 +64,8 @@ async def send_admin_dashboard(
     chat_type: ChatType | str | None = None,
     is_pm: bool = True,
     text_key: str | None = None,
+    *,
+    picker_page: int | None = None,
 ) -> None:
     """Send the main admin dashboard to a user in private chat."""
     ctx = get_context()
@@ -70,17 +73,30 @@ async def send_admin_dashboard(
 
     chat_type, chat_title = await get_chat_info(ctx, chat_id)
 
-    if chat_type == ChatType.CHANNEL or chat_type == "channel":
+    text, kb = await render_dashboard(
+        ctx, chat_id, user_id if is_pm else None, chat_type, chat_title, text_key, picker_page
+    )
+    panel = await client.send_message(user_id, text, reply_markup=kb)
+    if is_pm:
+        await bind_panel(user_id, panel.id, chat_id, picker_page)
+
+
+async def render_dashboard(
+    ctx: AppContext,
+    chat_id: int,
+    user_id: int | None,
+    chat_type: ChatType | str | None,
+    chat_title: str | None,
+    text_key: str | None = None,
+    picker_page: int | None = None,
+) -> tuple[str, InlineKeyboardMarkup]:
+    options = {} if picker_page is None else {"picker_page": picker_page}
+    if chat_type in (ChatType.CHANNEL, "channel"):
         from .keyboards import channel_settings_kb
 
-        kb = await channel_settings_kb(ctx, chat_id, user_id if is_pm else None)
+        kb = await channel_settings_kb(ctx, chat_id, user_id or chat_id, **options)
         main_text_key = text_key or "panel.main_text_channel"
     else:
-        kb = await main_menu_kb(chat_id, user_id if is_pm else None, chat_type=chat_type)
+        kb = await main_menu_kb(chat_id, user_id, chat_type=chat_type, **options)
         main_text_key = text_key or "panel.main_text"
-
-    await client.send_message(
-        user_id,
-        await at(user_id if is_pm else chat_id, main_text_key, title=chat_title),
-        reply_markup=kb,
-    )
+    return await at(user_id or chat_id, main_text_key, title=chat_title, id=chat_id), kb

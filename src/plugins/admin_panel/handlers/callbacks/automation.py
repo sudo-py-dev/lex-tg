@@ -1,5 +1,5 @@
 from pyrogram import Client, filters
-from pyrogram.types import CallbackQuery
+from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.core.bot import bot
 from src.db.models import ChatCleaner, ChatNightLock, ChatShabbatLock, Reminder
@@ -27,6 +27,22 @@ from src.plugins.admin_panel.handlers.service_cleaner import (
 from src.plugins.admin_panel.repository import get_chat_settings, toggle_service_type
 from src.utils.i18n import at
 from src.utils.permissions import Permission, check_user_permission
+
+
+@bot.on_callback_query(filters.regex(r"^panel:refresh_schedule$"))
+@admin_panel_context
+@safe_callback
+async def on_refresh_schedule(client: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
+    from src.plugins.scheduler.manager import SchedulerManager
+
+    if not await check_user_permission(
+        client, ap_ctx.chat_id, callback.from_user.id, Permission.CAN_BAN
+    ):
+        await callback.answer(await at(ap_ctx.at_id, "error.admin_no_permission"), show_alert=True)
+        return
+    refreshed = await SchedulerManager.sync_group(ap_ctx.ctx, ap_ctx.chat_id)
+    key = "panel.schedule_refreshed" if refreshed else "panel.schedule_refresh_failed"
+    await callback.answer(await at(ap_ctx.at_id, key), show_alert=not refreshed)
 
 
 @bot.on_callback_query(filters.regex(r"^panel:welcome$"))
@@ -131,7 +147,11 @@ async def on_toggle_shabbatlock(_: Client, callback: CallbackQuery, ap_ctx: Admi
             await session.commit()
             from src.plugins.scheduler.manager import SchedulerManager
 
-            await SchedulerManager.sync_group(ctx, chat_id)
+            if not await SchedulerManager.sync_group(ctx, chat_id):
+                await callback.answer(
+                    await at(ap_ctx.at_id, "panel.schedule_refresh_failed"), show_alert=True
+                )
+                return
             at_id = _panel_lang_id(ap_ctx.is_pm, callback.from_user.id, chat_id)
             await callback.answer(_plain(await at(at_id, "panel.setting_updated")))
 
@@ -205,13 +225,17 @@ async def on_toggle_reminder(_: Client, callback: CallbackQuery, ap_ctx: AdminPa
     ctx = ap_ctx.ctx
     async with ctx.db() as session:
         rem = await session.get(Reminder, rid)
-        if rem:
+        if rem and rem.chatId == chat_id:
             rem.isActive = not rem.isActive
             session.add(rem)
             await session.commit()
             from src.plugins.scheduler.manager import SchedulerManager
 
-            await SchedulerManager.sync_group(ctx, chat_id)
+            if not await SchedulerManager.sync_group(ctx, chat_id):
+                await callback.answer(
+                    await at(ap_ctx.at_id, "panel.schedule_refresh_failed"), show_alert=True
+                )
+                return
             await callback.answer(
                 _plain(
                     await at(
@@ -241,12 +265,16 @@ async def on_delete_reminder(_: Client, callback: CallbackQuery, ap_ctx: AdminPa
     ctx = ap_ctx.ctx
     async with ctx.db() as session:
         rem = await session.get(Reminder, rid)
-        if rem:
+        if rem and rem.chatId == chat_id:
             await session.delete(rem)
             await session.commit()
             from src.plugins.scheduler.manager import SchedulerManager
 
-            await SchedulerManager.sync_group(ctx, chat_id)
+            if not await SchedulerManager.sync_group(ctx, chat_id):
+                await callback.answer(
+                    await at(ap_ctx.at_id, "panel.schedule_refresh_failed"), show_alert=True
+                )
+                return
             await callback.answer(
                 _plain(
                     await at(
@@ -281,7 +309,11 @@ async def on_toggle_nightlock(_: Client, callback: CallbackQuery, ap_ctx: AdminP
             await session.commit()
             from src.plugins.scheduler.manager import SchedulerManager
 
-            await SchedulerManager.sync_group(ctx, chat_id)
+            if not await SchedulerManager.sync_group(ctx, chat_id):
+                await callback.answer(
+                    await at(ap_ctx.at_id, "panel.schedule_refresh_failed"), show_alert=True
+                )
+                return
             await callback.answer(
                 _plain(
                     await at(
@@ -320,7 +352,11 @@ async def on_toggle_cleaner(_: Client, callback: CallbackQuery, ap_ctx: AdminPan
             await session.commit()
             from src.plugins.scheduler.manager import SchedulerManager
 
-            await SchedulerManager.sync_group(ctx, chat_id)
+            if not await SchedulerManager.sync_group(ctx, chat_id):
+                await callback.answer(
+                    await at(ap_ctx.at_id, "panel.schedule_refresh_failed"), show_alert=True
+                )
+                return
             await callback.answer(
                 _plain(
                     await at(
@@ -406,8 +442,18 @@ async def on_timezone_search_prompt(_: Client, callback: CallbackQuery, ap_ctx: 
 
     user_id = callback.from_user.id
     at_id = _panel_lang_id(ap_ctx.is_pm, user_id, ap_ctx.chat_id)
-    await capture_next_input(user_id, ap_ctx.chat_id, "timezoneSearch")
-    await callback.message.edit_text(await at(at_id, "panel.timezone_search_prompt"))
+    kb = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    await at(at_id, "common.btn_cancel"),
+                    callback_data="panel:cancel_input:timezone",
+                )
+            ]
+        ]
+    )
+    await safe_edit(callback, await at(at_id, "panel.timezone_search_prompt"), reply_markup=kb)
+    await capture_next_input(user_id, ap_ctx.chat_id, "timezoneSearch", callback.message.id)
     await callback.answer()
 
 
@@ -434,7 +480,11 @@ async def on_set_timezone(_: Client, callback: CallbackQuery, ap_ctx: AdminPanel
             gs.timezone = new_tz
             session.add(gs)
             await session.commit()
-            await SchedulerManager.sync_group(ctx, chat_id)
+            if not await SchedulerManager.sync_group(ctx, chat_id):
+                await callback.answer(
+                    await at(ap_ctx.at_id, "panel.schedule_refresh_failed"), show_alert=True
+                )
+                return
     await callback.answer(_plain(await at(at_id, "panel.timezone_set_success", tz=new_tz)))
     chat_type_str = ap_ctx.chat_type.name.lower() if ap_ctx.chat_type else "supergroup"
     kb = await settings_category_kb(

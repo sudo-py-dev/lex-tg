@@ -208,7 +208,8 @@ async def filter_keyword_handler(client: Client, message: Message) -> None:
         [
             [
                 InlineKeyboardButton(
-                    await at(user_id, "common.btn_cancel"), callback_data=f"panel:filters:{page}"
+                    await at(user_id, "common.btn_cancel"),
+                    callback_data=f"panel:cancel_input:filters:{page}",
                 )
             ]
         ]

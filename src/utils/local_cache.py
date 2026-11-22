@@ -181,6 +181,13 @@ class AsyncSnapshotCache:
         async with self._lock:
             return self._delete_internal(key)
 
+    async def delete_if_value(self, key: str, expected: Any) -> bool:
+        """Remove a key only if it still holds the value the caller read."""
+        async with self._lock:
+            if key not in self._data or self._data[key] != expected:
+                return False
+            return self._delete_internal(key)
+
     def _delete_internal(self, key: str) -> bool:
         """Internal helper to delete a key without acquiring the lock."""
         self._loads.pop(key, None)

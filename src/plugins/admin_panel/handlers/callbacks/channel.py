@@ -47,6 +47,7 @@ from src.utils.actions import (
 )
 from src.utils.i18n import at
 from src.utils.media import build_watermark_config, parse_watermark_config
+from src.utils.panel_session import get_panel_session
 from src.utils.permissions import is_admin
 
 
@@ -63,7 +64,8 @@ async def on_channel_settings(client: Client, callback: CallbackQuery):
 
     s = await get_chat_settings(ctx, channel_id)
     title = s.title or f"Channel {channel_id}"
-    kb = await channel_settings_kb(ctx, channel_id, user_id)
+    _, picker_page = await get_panel_session(user_id, callback.message.id)
+    kb = await channel_settings_kb(ctx, channel_id, user_id, picker_page=picker_page)
 
     await safe_edit(
         callback,

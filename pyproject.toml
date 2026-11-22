@@ -51,7 +51,6 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "pytest-mock",
-    "pytest-mock",
     "factory-boy",
     "mypy",
     "ruff",

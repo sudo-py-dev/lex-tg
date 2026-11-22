@@ -79,7 +79,38 @@ async def test_dashboard_ignores_stale_channel_hint(mocker):
         "src.plugins.admin_panel.handlers.keyboards.channel_settings_kb", new_callable=AsyncMock
     )
     mocker.patch.object(commands, "at", new_callable=AsyncMock, return_value="Dashboard")
-    client = SimpleNamespace(send_message=AsyncMock())
+    client = SimpleNamespace(send_message=AsyncMock(return_value=SimpleNamespace(id=10)))
     await commands.send_admin_dashboard(client, 123, -10012345, chat_type="channel")
     group_menu.assert_awaited_once_with(-10012345, 123, chat_type=ChatType.SUPERGROUP)
     channel_menu.assert_not_awaited()
+
+
+async def test_chat_picker_only_loads_missing_metadata_for_requested_page(db_engine, mocker):
+    from src.db.repositories.chats import get_user_admin_chat_page
+
+    ctx = SimpleNamespace(db=async_sessionmaker(db_engine, expire_on_commit=False))
+    async with ctx.db() as session:
+        session.add_all(
+            ChatSettings(id=-i, title=None, isActive=True, chatType="group") for i in range(1, 12)
+        )
+        await session.flush()
+        session.add_all(ChatAdmin(chatId=-i, userId=123, status="owner") for i in range(1, 12))
+        await session.commit()
+    lookup = mocker.patch.object(
+        bot,
+        "get_chat",
+        new_callable=AsyncMock,
+        side_effect=lambda cid: SimpleNamespace(title=str(cid), type=ChatType.GROUP),
+    )
+    chats, total, page = await get_user_admin_chat_page(
+        ctx, bot, 123, ChatType.GROUP, page=20, page_size=8
+    )
+    assert (total, page) == (11, 1)
+    assert [cid for cid, _ in chats] == [-3, -2, -1]
+    assert lookup.await_count == 3
+
+    second_visit = await get_user_admin_chat_page(
+        ctx, bot, 123, ChatType.GROUP, page=1, page_size=8
+    )
+    assert second_visit == (chats, total, page)
+    assert lookup.await_count == 3

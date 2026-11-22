@@ -32,10 +32,10 @@ async def warns_kb(ctx, chat_id: int, user_id: int | None = None) -> InlineKeybo
                 InlineKeyboardButton(
                     await at(
                         at_id,
-                        "common.btn_action",
+                        "panel.change_action",
                         action=await at(at_id, f"action.{settings.warnAction.lower()}"),
                     ),
-                    callback_data="panel:cycle:warnAction",
+                    callback_data="panel:action:warnAction:0",
                 ),
                 InlineKeyboardButton(
                     await at(
@@ -224,7 +224,7 @@ async def blacklist_kb(
                     action=action_label,
                     icon=action_icon,
                 ),
-                callback_data=f"panel:cycle_blacklist_action:{page}",
+                callback_data=f"panel:action:blacklistAction:{page}",
             )
         ]
     )

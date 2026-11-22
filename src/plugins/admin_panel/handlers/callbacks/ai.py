@@ -155,7 +155,7 @@ async def on_set_groq_key(_: Client, callback: CallbackQuery, ap_ctx: AdminPanel
                 [
                     InlineKeyboardButton(
                         await at(at_id, "common.btn_cancel"),
-                        callback_data="panel:category:ai_security",
+                        callback_data="panel:cancel_input:category:ai_security",
                     )
                 ]
             ]
