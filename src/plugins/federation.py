@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 from src.core.bot import bot
 from src.core.context import get_context
 from src.core.plugin import Plugin, register
-from src.db.models import FedBan, FedChat, Federation
+from src.db.models import FedAdmin, FedBan, FedChat, Federation
 from src.utils.decorators import (
     admin_permission_required,
     resolve_target,
@@ -40,17 +40,20 @@ async def create_fed(ctx, name: str, owner_id: int) -> Federation:
         return f
 
 
-async def join_fed(ctx, fid: str, cid: int) -> FedChat:
+async def join_fed(ctx, fid: str, cid: int, actor_id: int) -> Federation | None:
     async with ctx.db() as s:
-        c = (await s.execute(select(FedChat).where(FedChat.chatId == cid))).scalars().first()
+        federation = await s.get(Federation, fid, with_for_update=True)
+        if federation is None or federation.ownerId != actor_id:
+            return None
+        c = await s.scalar(select(FedChat).where(FedChat.chatId == cid).with_for_update())
         if c:
             c.fedId = fid
         else:
             c = FedChat(fedId=fid, chatId=cid)
         s.add(c)
         await s.commit()
-        await s.refresh(c)
-        return c
+        await s.refresh(federation)
+        return federation
 
 
 async def get_fed_by_chat(ctx, cid: int) -> Federation | None:
@@ -67,8 +70,18 @@ async def get_fed_by_chat(ctx, cid: int) -> Federation | None:
         return c.fed if c else None
 
 
-async def fban_user(ctx, fid: str, uid: int, reason: str, by: int) -> FedBan:
+async def fban_user(ctx, cid: int, uid: int, reason: str, by: int) -> Federation | None:
     async with ctx.db() as s:
+        federation = await s.scalar(
+            select(Federation).join(FedChat).where(FedChat.chatId == cid).with_for_update()
+        )
+        if federation is None:
+            return None
+        fid = federation.id
+        if federation.ownerId != by and not await s.scalar(
+            select(FedAdmin.id).where(FedAdmin.fedId == fid, FedAdmin.userId == by).limit(1)
+        ):
+            return None
         b = (
             (await s.execute(select(FedBan).where(FedBan.fedId == fid, FedBan.userId == uid)))
             .scalars()
@@ -80,8 +93,8 @@ async def fban_user(ctx, fid: str, uid: int, reason: str, by: int) -> FedBan:
             b = FedBan(fedId=fid, userId=uid, reason=reason, bannedBy=by)
         s.add(b)
         await s.commit()
-        await s.refresh(b)
-        return b
+        await s.refresh(federation)
+        return federation
 
 
 async def is_fbanned(ctx, fid: str, uid: int) -> bool:
@@ -104,10 +117,14 @@ async def newfed_handler(client: Client, message: Message) -> None:
 @safe_handler
 @admin_permission_required(Permission.CAN_CHANGE_INFO)
 async def joinfed_handler(client: Client, message: Message) -> None:
-    if len(message.command) < 2:
+    if len(message.command) < 2 or not message.from_user:
         return
-    await join_fed(get_context(), message.command[1], message.chat.id)
-    await message.reply(await at(message.chat.id, "federation.joined"))
+    federation = await join_fed(
+        get_context(), message.command[1], message.chat.id, message.from_user.id
+    )
+    if federation is None:
+        return await message.reply(await at(message.chat.id, "common.err_access_denied"))
+    await message.reply(await at(message.chat.id, "federation.joined", name=federation.name))
 
 
 @bot.on_message(filters.command("fban") & filters.group)
@@ -116,14 +133,18 @@ async def joinfed_handler(client: Client, message: Message) -> None:
 @resolve_target
 async def fban_handler(client: Client, message: Message, target_user: User) -> None:
     ctx = get_context()
-    if not (f := await get_fed_by_chat(ctx, message.chat.id)):
+    if not message.from_user:
+        return
+    if not await get_fed_by_chat(ctx, message.chat.id):
         return await message.reply(await at(message.chat.id, "federation.not_joined"))
     r = (
         " ".join(message.command[2:])
         if len(message.command) > 2
         else await at(message.chat.id, "common.no_reason")
     )
-    await fban_user(ctx, f.id, target_user.id, r, message.from_user.id)
+    f = await fban_user(ctx, message.chat.id, target_user.id, r, message.from_user.id)
+    if f is None:
+        return await message.reply(await at(message.chat.id, "common.err_access_denied"))
     await message.reply(
         await at(message.chat.id, "federation.banned", mention=target_user.mention, fed=f.name)
     )

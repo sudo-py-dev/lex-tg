@@ -28,6 +28,9 @@ class Config:
 
     # Logging and Metadata
     LOG_LEVEL: str = field(default_factory=lambda: environ.get("LOG_LEVEL", "INFO"))
+    SCHEDULER_TIMEZONE: str = field(
+        default_factory=lambda: environ.get("SCHEDULER_TIMEZONE", "UTC")
+    )
     BOT_NAME: str = "lex-tg"
     GITHUB_URL: str = "https://github.com/sudo-py-dev/lex-tg"
     DEV_NAME: str = "sudo-py-dev"

@@ -12,7 +12,7 @@ from src.db.repositories.blacklist import (
     get_all_blacklist,
     remove_blacklist,
 )
-from src.utils.decorators import admin_permission_required, safe_handler
+from src.utils.decorators import admin_permission_required, get_sender_id, safe_handler
 from src.utils.i18n import at
 from src.utils.input import finalize_input_capture, is_waiting_for_input
 from src.utils.message_rules import (
@@ -22,7 +22,7 @@ from src.utils.message_rules import (
     match_block,
 )
 from src.utils.moderation import execute_moderation_action, resolve_sender
-from src.utils.permissions import Permission
+from src.utils.permissions import Permission, can_manage_blacklist
 
 
 class BlacklistPlugin(Plugin):
@@ -40,6 +40,10 @@ class BlacklistPlugin(Plugin):
 @admin_permission_required(Permission.CAN_BAN)
 async def add_blacklist_handler(client: Client, message: Message) -> None:
     if len(message.command) < 2:
+        return
+    sender_id = get_sender_id(message)
+    if sender_id is None or not await can_manage_blacklist(client, message.chat.id, sender_id):
+        await message.reply(await at(message.chat.id, "error.admin_no_permission"))
         return
     ctx, p = get_context(), message.text.split(None, 1)[1].strip()
     is_r, is_w, p = detect_pattern_type(p)
@@ -64,6 +68,10 @@ async def add_blacklist_handler(client: Client, message: Message) -> None:
 @admin_permission_required(Permission.CAN_BAN)
 async def rm_blacklist_handler(client: Client, message: Message) -> None:
     if len(message.command) < 2:
+        return
+    sender_id = get_sender_id(message)
+    if sender_id is None or not await can_manage_blacklist(client, message.chat.id, sender_id):
+        await message.reply(await at(message.chat.id, "error.admin_no_permission"))
         return
     ctx, p = get_context(), detect_pattern_type(message.text.split(None, 1)[1])[2]
     if await remove_blacklist(ctx, message.chat.id, p):
@@ -133,6 +141,9 @@ async def blacklist_input_handler(client: Client, message: Message) -> None:
         str(message.text or message.caption or "").strip(),
     )
     if not p:
+        return
+    if not await can_manage_blacklist(client, cid, uid):
+        await message.reply(await at(uid, "error.admin_no_permission"))
         return
     is_r, is_w, p = detect_pattern_type(p)
     if is_r:

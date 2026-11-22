@@ -26,6 +26,8 @@ test -f .env || cp .env.example .env
 mkdir -p data sessions logs
 ```
 
+For native Telegram encryption acceleration, use `uv sync --extra crypto`. Building this extra from source requires a C compiler and the development headers for your Python version, including `Python.h`.
+
 Set these values in `.env`.
 
 | Variable | Value |
@@ -34,6 +36,8 @@ Set these values in `.env`.
 | `BOT_TOKEN` | The token issued by BotFather. |
 | `OWNER_ID` | Your numeric Telegram user ID. |
 | `DATABASE_URL` | Use `sqlite+aiosqlite:///data/bot.sqlite3` for a persistent local database, or enter your PostgreSQL connection URL. |
+
+Global maintenance jobs use UTC by default. Set `SCHEDULER_TIMEZONE` to an IANA timezone such as `Asia/Jerusalem` to change that schedule. Chat-specific jobs use the timezones set in their respective chats.
 
 Keep your `.env` and Telegram session files private. Then start the bot.
 
@@ -45,7 +49,9 @@ In Telegram, open the bot privately and send `/start`. Add it to your group or c
 
 ## Deployment
 
-**Docker Compose.** Set the Telegram and owner values in `.env`. Set `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_DB`, then make sure `DATABASE_URL` uses the same credentials and the Compose database host `db`. Start the services and follow the bot logs.
+**Docker Compose.** Set the Telegram and owner values in `.env`. Generate distinct passwords for `POSTGRES_PASSWORD` and `BOT_DB_PASSWORD`. Set `DATABASE_URL` to `postgresql+asyncpg://lex_bot:<url-encoded-bot-password>@db:5432/botdb`, adjusting the database name if you set `POSTGRES_DB`. Start the services and follow the bot logs.
+
+For an existing `pgdata` directory, PostgreSQL skips the initialization script. Keep the existing bootstrap username and database name in `.env`. Before switching the bot connection URL, use a PostgreSQL administrator session to rotate the bootstrap password, create the separate `lex_bot` login, grant it `USAGE, CREATE` on the bot schema, and transfer ownership of the app's existing tables and sequences to it. Preserve the data directory during the upgrade.
 
 ```sh
 docker compose up -d

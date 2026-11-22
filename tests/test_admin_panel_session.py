@@ -79,6 +79,7 @@ async def test_cancel_panel_input_preserves_return_route(
     mocker.patch.object(panel_input, "get_cache", return_value=cache)
     mocker.patch.object(inputs, "at", side_effect=lambda _, key: key)
     mocker.patch.object(inputs, "resolve_chat_type", return_value=chat_type)
+    mocker.patch.object(inputs, "can_manage_blacklist", return_value=True)
     edit = mocker.patch.object(inputs, "safe_edit")
     callback = SimpleNamespace(
         from_user=SimpleNamespace(id=123),
@@ -185,9 +186,12 @@ async def test_bulk_purge_confirmation_is_consumed_once(mocker, choice):
     cache = AsyncSnapshotCache()
     mocker.patch.object(purge, "get_cache", return_value=cache)
     mocker.patch.object(purge, "at", side_effect=lambda _, key, **fmt: key)
-    mocker.patch.object(purge, "has_permission", return_value=True)
     await cache.set(f"purge_confirm:123:{token}", (-42, 105))
-    message = SimpleNamespace(chat=SimpleNamespace(type=ChatType.PRIVATE), edit_text=AsyncMock())
+    message = SimpleNamespace(
+        chat=SimpleNamespace(type=ChatType.PRIVATE),
+        edit_text=AsyncMock(),
+        edit_reply_markup=AsyncMock(),
+    )
     callback = SimpleNamespace(
         from_user=SimpleNamespace(id=123),
         matches=[
@@ -200,7 +204,14 @@ async def test_bulk_purge_confirmation_is_consumed_once(mocker, choice):
         answer=AsyncMock(),
     )
     client = SimpleNamespace(
+        me=SimpleNamespace(id=456),
+        get_chat=AsyncMock(return_value=SimpleNamespace(type=ChatType.SUPERGROUP)),
         get_chat_member=AsyncMock(return_value=SimpleNamespace(status=ChatMemberStatus.OWNER)),
+        get_messages=AsyncMock(
+            side_effect=lambda chat_id, ids, **_: [
+                SimpleNamespace(id=i, chat=SimpleNamespace(id=chat_id)) for i in ids
+            ]
+        ),
         send_message=AsyncMock(return_value=SimpleNamespace(id=300, delete=AsyncMock())),
         delete_messages=AsyncMock(side_effect=[None, BadRequest()]),
     )
@@ -326,3 +337,77 @@ async def test_warning_action_picker_sets_explicit_value_and_reopens(db_engine, 
     await action_picker.on_action_picker(object(), callback, panel)
     assert (await get_chat_settings(ctx, -42)).warnAction == "ban"
     assert edit.call_args.args[1] == "panel.warns_text action.ban"
+
+
+@pytest.mark.parametrize(
+    ("chat_type", "actor_can_delete", "bot_can_delete", "result"),
+    [
+        (ChatType.GROUP, None, None, "panel.purge_result_partial"),
+        (ChatType.SUPERGROUP, True, False, "error.bot_no_permission"),
+        (ChatType.SUPERGROUP, False, True, "error.admin_no_permission"),
+    ],
+)
+async def test_purge_checks_fresh_rights_and_preserves_back(
+    mocker, chat_type, actor_can_delete, bot_can_delete, result
+):
+    from pyrogram.enums import ChatMemberStatus
+    from pyrogram.errors import MessageDeleteForbidden
+
+    from src.plugins import purge
+
+    token = "b" * 32
+    cache = AsyncSnapshotCache()
+    mocker.patch.object(purge, "get_cache", return_value=cache)
+    mocker.patch.object(purge, "at", side_effect=lambda _, key, **fmt: key)
+    await cache.set(f"purge_confirm:123:{token}", (-42, 4))
+    message = SimpleNamespace(chat=SimpleNamespace(type=ChatType.PRIVATE), edit_text=AsyncMock())
+    callback = SimpleNamespace(
+        from_user=SimpleNamespace(id=123),
+        matches=[
+            re.fullmatch(
+                r"panel:purge_confirm:(yes|no):([0-9a-f]{32})", f"panel:purge_confirm:yes:{token}"
+            )
+        ],
+        message=message,
+        answer=AsyncMock(),
+    )
+
+    def member(can_delete):
+        rights = SimpleNamespace(can_delete_messages=can_delete) if can_delete is not None else None
+        return SimpleNamespace(status=ChatMemberStatus.ADMINISTRATOR, privileges=rights)
+
+    async def delete(chat_id, ids):
+        assert chat_id == -42
+        assert 297 not in ids
+        if 298 in ids:
+            raise MessageDeleteForbidden()
+
+    client = SimpleNamespace(
+        me=SimpleNamespace(id=456),
+        get_chat=AsyncMock(return_value=SimpleNamespace(type=chat_type)),
+        get_chat_member=AsyncMock(side_effect=[member(actor_can_delete), member(bot_can_delete)]),
+        get_messages=AsyncMock(
+            return_value=[
+                SimpleNamespace(id=299, chat=SimpleNamespace(id=-42)),
+                SimpleNamespace(id=298, chat=SimpleNamespace(id=-42)),
+                SimpleNamespace(id=297, chat=SimpleNamespace(id=-50)),
+                SimpleNamespace(id=296, chat=None),
+            ]
+        ),
+        send_message=AsyncMock(return_value=SimpleNamespace(id=300, delete=AsyncMock())),
+        delete_messages=AsyncMock(side_effect=delete),
+    )
+    await purge.confirm_panel_purge(client, callback)
+
+    assert message.edit_text.call_args.args == (result,)
+    button = message.edit_text.call_args.kwargs["reply_markup"].inline_keyboard[0][0]
+    assert button.callback_data == "panel:category:moderation"
+    if chat_type == ChatType.GROUP:
+        assert [call.args[1] for call in client.delete_messages.await_args_list] == [
+            [299, 298],
+            [299],
+            [298],
+        ]
+    else:
+        client.delete_messages.assert_not_awaited()
+        callback.answer.assert_awaited_once_with(result, show_alert=True)

@@ -11,7 +11,9 @@ services:
       - ./logs:/app/logs
       - ./data:/app/data
     environment:
-      - DATABASE_URL=${DATABASE_URL}
+      DATABASE_URL: "${DATABASE_URL:?Set DATABASE_URL for the bot database role}"
+      POSTGRES_PASSWORD: ""
+      BOT_DB_PASSWORD: ""
     depends_on:
       db:
         condition: service_healthy
@@ -42,16 +44,21 @@ services:
 
   db:
     image: postgres:16-alpine
+    entrypoint: ["/bin/sh", "/usr/local/bin/lex-postgres-entrypoint.sh"]
+    command: ["postgres"]
     container_name: lex-tg-db
     restart: always
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-bot}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bot_password}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set a unique PostgreSQL bootstrap password}"
       POSTGRES_DB: ${POSTGRES_DB:-botdb}
+      BOT_DB_PASSWORD: "${BOT_DB_PASSWORD:?Set a separate password for lex_bot}"
     volumes:
       - ./pgdata:/var/lib/postgresql/data
+      - ./scripts/postgres_entrypoint.sh:/usr/local/bin/lex-postgres-entrypoint.sh:ro
+      - ./scripts/init_postgres.sh:/docker-entrypoint-initdb.d/10-lex-bot.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 5s
       retries: 5

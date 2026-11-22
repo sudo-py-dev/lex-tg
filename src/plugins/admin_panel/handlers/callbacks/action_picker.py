@@ -7,7 +7,7 @@ from src.plugins.admin_panel.repository import get_chat_settings, update_chat_se
 from src.plugins.admin_panel.validation import is_setting_allowed
 from src.utils.actions import FLOOD_ACTIONS, MODERATION_ACTIONS, PUNISHMENT_ACTIONS
 from src.utils.i18n import at
-from src.utils.permissions import Permission, check_user_permission
+from src.utils.permissions import Permission, can_manage_blacklist, check_user_permission
 
 from .common import safe_callback, safe_edit
 from .moderation import on_blacklist, on_warns_panel
@@ -29,9 +29,14 @@ async def on_action_picker(client: Client, callback: CallbackQuery, panel: Admin
     field, page_str, choice = callback.matches[0].groups()
     page = int(page_str)
     chat_type = panel.chat_type.name.lower() if panel.chat_type else "supergroup"
-    if not is_setting_allowed(field, chat_type) or not await check_user_permission(
-        client, panel.chat_id, callback.from_user.id, Permission.CAN_BAN
-    ):
+    can_manage = (
+        await can_manage_blacklist(client, panel.chat_id, callback.from_user.id)
+        if field == "blacklistAction"
+        else await check_user_permission(
+            client, panel.chat_id, callback.from_user.id, Permission.CAN_BAN
+        )
+    )
+    if not is_setting_allowed(field, chat_type) or not can_manage:
         await callback.answer(await at(panel.at_id, "error.admin_no_permission"), show_alert=True)
         return
 

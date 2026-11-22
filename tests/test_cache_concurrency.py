@@ -91,19 +91,19 @@ async def test_loader_ttl_capacity_and_snapshot_exclusion(tmp_path, mocker):
 
 
 async def test_slow_snapshot_does_not_block_cache_operations(tmp_path, mocker):
-    cache = AsyncSnapshotCache(str(tmp_path / "cache.pkl"))
+    cache = AsyncSnapshotCache(tmp_path / "cache.snapshot")
     await cache.set("live", 1)
     started, release = threading.Event(), threading.Event()
-    import pickle
+    import json
 
-    original = pickle.dump
+    original = json.dumps
 
     def slow_dump(*args, **kwargs):
         started.set()
         assert release.wait(5)
         return original(*args, **kwargs)
 
-    mocker.patch("src.utils.local_cache.pickle.dump", side_effect=slow_dump)
+    mocker.patch("src.utils.local_cache.json.dumps", side_effect=slow_dump)
     saving = asyncio.create_task(cache.save_snapshot())
     try:
         assert await asyncio.to_thread(started.wait, 2)
