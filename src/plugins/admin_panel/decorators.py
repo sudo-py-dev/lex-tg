@@ -15,7 +15,7 @@ from pyrogram.types import CallbackQuery, Message
 from src.core.context import AppContext, get_context
 from src.utils.i18n import at
 from src.utils.panel_session import get_panel_session
-from src.utils.permissions import is_admin
+from src.utils.permissions import Permission, check_user_permission, is_admin
 
 from .repository import get_active_chat, get_chat_info
 
@@ -128,3 +128,33 @@ def admin_panel_context(func: Callable[..., Awaitable[None]]) -> Callable[..., A
         await func(client, event, ap_ctx, *args, **kwargs)
 
     return wrapper
+
+
+def require_panel_permission(
+    permission: Permission,
+) -> Callable[[Callable[..., Awaitable[None]]], Callable[..., Awaitable[None]]]:
+    """Place under @admin_panel_context: enforce the same right the matching command needs."""
+
+    def decorator(func: Callable[..., Awaitable[None]]) -> Callable[..., Awaitable[None]]:
+        @functools.wraps(func)
+        async def wrapper(
+            client: Client,
+            event: Message | CallbackQuery,
+            ap_ctx: AdminPanelContext,
+            *args: Any,
+            **kwargs: Any,
+        ) -> None:
+            if not await check_user_permission(
+                client, ap_ctx.chat_id, event.from_user.id, permission
+            ):
+                text = await at(ap_ctx.at_id, "error.admin_no_permission")
+                if isinstance(event, Message):
+                    await event.reply(text)
+                else:
+                    await event.answer(text, show_alert=True)
+                return
+            await func(client, event, ap_ctx, *args, **kwargs)
+
+        return wrapper
+
+    return decorator

@@ -5,6 +5,7 @@ from collections import defaultdict
 
 from loguru import logger
 from pyrogram import Client, filters
+from pyrogram.enums import ChatMemberStatus, ChatType
 from pyrogram.errors import BadRequest, ChatAdminRequired, Forbidden
 from pyrogram.types import Message, User
 
@@ -16,7 +17,7 @@ from src.plugins.admin_panel.repository import (
     update_chat_setting,
     update_settings,
 )
-from src.utils.decorators import admin_permission_required, safe_handler
+from src.utils.decorators import admin_permission_required, get_sender_id, safe_handler
 from src.utils.i18n import at
 from src.utils.permissions import Permission
 
@@ -154,6 +155,27 @@ class LoggingPlugin(Plugin):
 # --- Administrative Commands ---
 
 
+async def _can_use_log_target(client: Client, target_id: int, user_id: int | None) -> bool:
+    """The caller must administer the target (with posting rights for channels)."""
+    if user_id is None:
+        return False
+    try:
+        member = await client.get_chat_member(target_id, user_id)
+    except Exception:
+        return False
+    if member.status == ChatMemberStatus.OWNER:
+        return True
+    if member.status != ChatMemberStatus.ADMINISTRATOR:
+        return False
+    try:
+        target = await client.get_chat(target_id)
+    except Exception:
+        return False
+    if target.type == ChatType.CHANNEL:
+        return bool(member.privileges and member.privileges.can_post_messages)
+    return True
+
+
 @bot.on_message(filters.command("setlog") & filters.group)
 @safe_handler
 @admin_permission_required(Permission.CAN_CHANGE_INFO)
@@ -174,6 +196,9 @@ async def set_log_handler(client: Client, message: Message) -> None:
             channel_id = int(message.command[1])
         except ValueError:
             return
+    if not await _can_use_log_target(client, channel_id, get_sender_id(message)):
+        await message.reply(await at(message.chat.id, "log.err_target_not_admin"))
+        return
     ctx = get_context()
     await update_chat_setting(ctx, message.chat.id, "logChannelId", channel_id)
     await message.reply(await at(message.chat.id, "log.set"))

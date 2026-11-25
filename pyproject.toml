@@ -14,7 +14,6 @@ dependencies = [
     "apscheduler>=3.10",
     "pydantic-settings>=2.0",
     "loguru",
-    "deep-translator>=1.11.4",
     "python-dotenv>=1.2.2",
     "langdetect>=1.0.9",
     "emoji>=2.15.0",
@@ -58,6 +57,7 @@ dev = [
     "ruff",
     "pylint",
     "rich>=13.0.0",
+    "deep-translator>=1.11.4",
 ]
 
 [tool.ruff]

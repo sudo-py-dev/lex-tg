@@ -309,6 +309,7 @@
   "lock.unlocked": "🔓 {type} messages are now unlocked.",
   "lock.url": "URL",
   "log.action": "📋 **{action}** in {chat}\n👤 User: {target}\n👮 By: {actor}{reason}",
+  "log.err_target_not_admin": "❌ You must be an admin of that chat (with posting rights for channels) to send logs there.",
   "log.set": "✅ Log channel set.",
   "log.unset": "✅ Log channel removed.",
   "logging.batch_header": "📋 **Moderation Audit** | {chat}",

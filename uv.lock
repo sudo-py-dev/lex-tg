@@ -696,7 +696,6 @@ dependencies = [
     { name = "alembic" },
     { name = "apscheduler" },
     { name = "asyncpg" },
-    { name = "deep-translator" },
     { name = "edge-tts" },
     { name = "emoji" },
     { name = "hebcal-api" },
@@ -720,6 +719,7 @@ crypto = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "deep-translator" },
     { name = "factory-boy" },
     { name = "mypy" },
     { name = "pylint" },
@@ -736,7 +736,6 @@ requires-dist = [
     { name = "alembic" },
     { name = "apscheduler", specifier = ">=3.10" },
     { name = "asyncpg" },
-    { name = "deep-translator", specifier = ">=1.11.4" },
     { name = "edge-tts", specifier = ">=7.2.8" },
     { name = "emoji", specifier = ">=2.15.0" },
     { name = "hebcal-api", specifier = ">=0.2.0" },
@@ -757,6 +756,7 @@ provides-extras = ["crypto"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "deep-translator", specifier = ">=1.11.4" },
     { name = "factory-boy" },
     { name = "mypy" },
     { name = "pylint" },
