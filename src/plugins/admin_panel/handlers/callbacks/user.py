@@ -1,5 +1,8 @@
+import contextlib
+
 from pyrogram import Client, filters
 from pyrogram.enums import ChatType
+from pyrogram.errors import MessageDeleteForbidden, MessageIdInvalid, MessageNotModified
 from pyrogram.types import CallbackQuery
 
 from src.core.bot import bot
@@ -29,7 +32,13 @@ async def on_panel_close(_: Client, callback: CallbackQuery):
     if callback.message:
         if callback.message.chat.type == ChatType.PRIVATE:
             await cancel_input_capture(callback.from_user.id, callback.message.id)
-        await callback.message.delete()
+        try:
+            await callback.message.delete()
+        except (MessageDeleteForbidden, MessageIdInvalid):
+            # Telegram refuses deletes of old bot messages in groups (48h rule) or
+            # without delete rights; drop the buttons so the panel is still closed.
+            with contextlib.suppress(MessageNotModified, MessageIdInvalid):
+                await callback.message.edit_reply_markup(reply_markup=None)
     await callback.answer()
 
 
