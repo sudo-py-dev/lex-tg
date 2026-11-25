@@ -2,7 +2,11 @@ from pyrogram import Client, ContinuePropagation, filters
 from pyrogram.types import CallbackQuery
 
 from src.core.bot import bot
-from src.plugins.admin_panel.decorators import AdminPanelContext, admin_panel_context
+from src.plugins.admin_panel.decorators import (
+    AdminPanelContext,
+    admin_panel_context,
+    require_panel_permission,
+)
 from src.plugins.admin_panel.handlers.callbacks.common import (
     _panel_lang_id,
     _plain,
@@ -182,6 +186,7 @@ async def on_toggle_blacklist_buttons(
 
 @bot.on_callback_query(filters.regex(r"^panel:lang_toggle:(.*):(\d+)$"))
 @admin_panel_context
+@require_panel_permission(Permission.CAN_BAN)
 @safe_callback
 async def on_lang_toggle(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
     code = callback.matches[0].group(1)
@@ -213,6 +218,7 @@ async def on_lang_toggle(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelC
 
 @bot.on_callback_query(filters.regex(r"^panel:cycle_lang_block_action:(\d+)$"))
 @admin_panel_context
+@require_panel_permission(Permission.CAN_BAN)
 @safe_callback
 async def on_cycle_lang_block_action(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
     page = int(callback.matches[0].group(1))
@@ -420,37 +426,6 @@ async def on_logging_picker(_: Client, callback: CallbackQuery, ap_ctx: AdminPan
     )
     await callback.message.delete()
     await callback.answer()
-
-
-@bot.on_callback_query(filters.regex(r"^panel:logging_set:(-?\d+)$"))
-@admin_panel_context
-@safe_callback
-async def on_logging_set(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
-    if not await check_user_permission(
-        _, ap_ctx.chat_id, callback.from_user.id, Permission.CAN_BAN
-    ):
-        await callback.answer(await at(ap_ctx.at_id, "error.admin_no_permission"), show_alert=True)
-        return
-
-    new_log_id = int(callback.matches[0].group(1))
-    chat_id = ap_ctx.chat_id
-    at_id = _panel_lang_id(ap_ctx.is_pm, callback.from_user.id, chat_id)
-
-    await update_chat_setting(ap_ctx.ctx, chat_id, "logChannelId", new_log_id)
-    await callback.answer(_plain(await at(at_id, "panel.setting_updated")))
-
-    s = await get_chat_settings(ap_ctx.ctx, chat_id)
-    kb = await logging_kb(
-        ap_ctx.ctx, chat_id, user_id=callback.from_user.id if ap_ctx.is_pm else None
-    )
-    await callback.message.edit_text(
-        await at(
-            at_id,
-            "panel.logging_text",
-            channel=s.logChannelName or s.logChannelId or await at(at_id, "panel.not_set"),
-        ),
-        reply_markup=kb,
-    )
 
 
 @bot.on_callback_query(filters.regex(r"^panel:logging_remove$"))

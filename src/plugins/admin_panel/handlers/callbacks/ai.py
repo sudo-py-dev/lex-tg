@@ -7,7 +7,11 @@ from pyrogram.types import (
 )
 
 from src.core.bot import bot
-from src.plugins.admin_panel.decorators import AdminPanelContext, admin_panel_context
+from src.plugins.admin_panel.decorators import (
+    AdminPanelContext,
+    admin_panel_context,
+    require_panel_permission,
+)
 from src.plugins.admin_panel.handlers.ai_kbs import model_selection_kb
 from src.plugins.admin_panel.handlers.callbacks.common import (
     _next_ai_provider,
@@ -24,10 +28,12 @@ from src.plugins.ai_assistant.service import DEFAULT_MODELS as AI_PROVIDER_DEFAU
 from src.utils.actions import AI_GUARD_ACTIONS, cycle_action
 from src.utils.i18n import at
 from src.utils.input import capture_next_input
+from src.utils.permissions import Permission
 
 
 @bot.on_callback_query(filters.regex(r"^panel:ai:(.*)"))
 @admin_panel_context
+@require_panel_permission(Permission.CAN_CHANGE_INFO)
 @safe_callback
 async def on_ai_settings(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
     user_id = callback.from_user.id
@@ -71,6 +77,7 @@ async def on_ai_settings(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelC
 
 @bot.on_callback_query(filters.regex(r"^panel:toggle_ai_guard$"))
 @admin_panel_context
+@require_panel_permission(Permission.CAN_CHANGE_INFO)
 @safe_callback
 async def on_toggle_ai_guard(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
     from src.db.repositories.ai_guard import get_ai_guard_settings, update_ai_guard_settings
@@ -93,6 +100,7 @@ async def on_toggle_ai_guard(_: Client, callback: CallbackQuery, ap_ctx: AdminPa
 
 @bot.on_callback_query(filters.regex(r"^panel:toggle_ai_image_guard$"))
 @admin_panel_context
+@require_panel_permission(Permission.CAN_CHANGE_INFO)
 @safe_callback
 async def on_toggle_ai_image_guard(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
     from src.db.repositories.ai_guard import get_ai_guard_settings, update_ai_guard_settings
@@ -115,6 +123,7 @@ async def on_toggle_ai_image_guard(_: Client, callback: CallbackQuery, ap_ctx: A
 
 @bot.on_callback_query(filters.regex(r"^panel:cycle_ai_guard_action$"))
 @admin_panel_context
+@require_panel_permission(Permission.CAN_CHANGE_INFO)
 @safe_callback
 async def on_cycle_ai_guard_action(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
     from src.db.repositories.ai_guard import get_ai_guard_settings, update_ai_guard_settings
@@ -140,6 +149,7 @@ async def on_cycle_ai_guard_action(_: Client, callback: CallbackQuery, ap_ctx: A
 
 @bot.on_callback_query(filters.regex(r"^panel:set_groq_key$"))
 @admin_panel_context
+@require_panel_permission(Permission.CAN_CHANGE_INFO)
 @safe_callback
 async def on_set_groq_key(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
     user_id = callback.from_user.id

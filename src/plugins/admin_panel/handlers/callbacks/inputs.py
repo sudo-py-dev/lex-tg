@@ -15,7 +15,14 @@ from src.plugins.admin_panel.validation import is_setting_allowed
 from src.plugins.ai_assistant.repository import AIRepository
 from src.utils.i18n import at
 from src.utils.input import cancel_input_capture, capture_next_input
-from src.utils.permissions import can_manage_blacklist
+from src.utils.permissions import Permission, can_manage_blacklist, check_user_permission
+
+# Inputs whose matching commands require a specific admin right.
+# blacklistInput is checked separately with can_manage_blacklist above the routing.
+FIELD_PERMISSIONS = {
+    "langblockInput": Permission.CAN_BAN,
+    "stickerInput": Permission.CAN_RESTRICT,
+}
 
 
 @bot.on_callback_query(filters.regex(r"^panel:input:(\w+):?(-?\d+)?$"))
@@ -51,6 +58,13 @@ async def on_panel_input(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelC
     validate_chat_id = int(target_id_str) if channel_route else chat_id
     if validate_chat_id != chat_id:
         await callback.answer(await at(ap_ctx.at_id, "common.err_access_denied"), show_alert=True)
+        return
+
+    required = (
+        Permission.CAN_CHANGE_INFO if field.startswith("ai") else FIELD_PERMISSIONS.get(field)
+    )
+    if required and not await check_user_permission(_, chat_id, user_id, required):
+        await callback.answer(await at(ap_ctx.at_id, "error.admin_no_permission"), show_alert=True)
         return
 
     chat_type = await resolve_chat_type(ctx, validate_chat_id)

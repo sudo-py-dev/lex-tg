@@ -23,6 +23,7 @@ from src.utils.message_rules import (
     get_reply_rules,
     match_block,
 )
+from src.utils.permissions import Permission
 
 
 def block(pattern, regex=False, wildcard=False):
@@ -296,6 +297,30 @@ async def test_blacklist_panel_delete_invalidates_only_authorized_chat(
     ap_ctx = AdminPanelContext(chat_id=-123, at_id=123, ctx=rule_context, is_pm=True)
     await moderation.on_blacklist_remove(object(), callback, ap_ctx)
     assert bool(await get_block_rules(rule_context, target_chat)) == (foreign_chat or not can_ban)
+
+
+@pytest.mark.parametrize("can_restrict", [False, True])
+async def test_panel_clear_filters_requires_restrict_permission(rule_context, mocker, can_restrict):
+    from src.plugins.admin_panel.decorators import AdminPanelContext
+    from src.plugins.admin_panel.handlers.callbacks import filters as filter_panel
+
+    await replies.add_filter(rule_context, -123, "keep", "1")
+    check = mocker.patch(
+        "src.plugins.admin_panel.decorators.check_user_permission",
+        new_callable=AsyncMock,
+        return_value=can_restrict,
+    )
+    mocker.patch("src.plugins.admin_panel.decorators.at", new_callable=AsyncMock, return_value="no")
+    mocker.patch.object(filter_panel, "at", new_callable=AsyncMock, return_value="done")
+    mocker.patch.object(filter_panel, "filters_menu_kb", new_callable=AsyncMock)
+    mocker.patch.object(filter_panel, "safe_edit", new_callable=AsyncMock)
+    callback = SimpleNamespace(from_user=SimpleNamespace(id=123), answer=AsyncMock())
+    ap_ctx = AdminPanelContext(chat_id=-123, at_id=123, ctx=rule_context, is_pm=True)
+    await filter_panel.on_clear_filters(object(), callback, ap_ctx)
+    assert check.await_args.args[3] == Permission.CAN_RESTRICT
+    assert bool(await get_reply_rules(rule_context, -123)) == (not can_restrict)
+    if not can_restrict:
+        callback.answer.assert_awaited_once_with("no", show_alert=True)
 
 
 async def test_cold_burst_shares_only_three_queries(rule_context, db_engine):

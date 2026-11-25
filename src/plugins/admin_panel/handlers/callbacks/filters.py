@@ -10,7 +10,11 @@ from pyrogram.errors import (
 from pyrogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 
 from src.core.bot import bot
-from src.plugins.admin_panel.decorators import AdminPanelContext, admin_panel_context
+from src.plugins.admin_panel.decorators import (
+    AdminPanelContext,
+    admin_panel_context,
+    require_panel_permission,
+)
 from src.plugins.admin_panel.handlers.callbacks.common import (
     _panel_lang_id,
     _plain,
@@ -21,6 +25,7 @@ from src.plugins.admin_panel.handlers.keyboards import filter_options_kb, filter
 from src.utils.i18n import at
 from src.utils.input import capture_next_input
 from src.utils.local_cache import get_cache
+from src.utils.permissions import Permission
 
 
 @bot.on_callback_query(filters.regex(r"^panel:filters:?(\d+)?$"))
@@ -40,6 +45,7 @@ async def on_filters_panel(_: Client, callback: CallbackQuery, ap_ctx: AdminPane
 
 @bot.on_callback_query(filters.regex(r"^panel:add_filter:?(\d+)?$"))
 @admin_panel_context
+@require_panel_permission(Permission.CAN_RESTRICT)
 @safe_callback
 async def on_add_filter(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
     from src.db.repositories.filters import get_filters_count
@@ -76,6 +82,7 @@ async def on_add_filter(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelCo
 
 @bot.on_callback_query(filters.regex(r"^panel:edit_filter:(\d+):(\d+)$"))
 @admin_panel_context
+@require_panel_permission(Permission.CAN_RESTRICT)
 @safe_callback
 async def on_edit_filter(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
     f_id = int(callback.matches[0].group(1))
@@ -124,6 +131,7 @@ async def on_edit_filter(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelC
 
 @bot.on_callback_query(filters.regex(r"^panel:delete_filter:(\d+):(\d+)$"))
 @admin_panel_context
+@require_panel_permission(Permission.CAN_RESTRICT)
 @safe_callback
 async def on_delete_filter(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
     f_id = int(callback.matches[0].group(1))
@@ -153,6 +161,7 @@ async def on_delete_filter(_: Client, callback: CallbackQuery, ap_ctx: AdminPane
 
 @bot.on_callback_query(filters.regex(r"^panel:clear_filters$"))
 @admin_panel_context
+@require_panel_permission(Permission.CAN_RESTRICT)
 @safe_callback
 async def on_clear_filters(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
     from src.db.repositories.filters import remove_all_filters
@@ -206,6 +215,7 @@ async def on_toggle_filter(_: Client, callback: CallbackQuery, ap_ctx: AdminPane
 
 @bot.on_callback_query(filters.regex(r"^panel:save_filter:(\d+)$"))
 @admin_panel_context
+@require_panel_permission(Permission.CAN_RESTRICT)
 @safe_callback
 async def on_save_filter(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelContext):
     page = int(callback.matches[0].group(1))
