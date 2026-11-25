@@ -53,11 +53,13 @@ async def update_filter_by_id(
     response_type: str = "text",
     file_id: str | None = None,
     settings: dict | None = None,
+    *,
+    chat_id: int,
 ) -> bool:
-    """Update an existing filter by its ID."""
+    """Update a filter by ID, only if it belongs to chat_id."""
     async with ctx.db() as session:
         filter_obj = await session.get(Filter, filter_id)
-        if not filter_obj:
+        if not filter_obj or filter_obj.chatId != chat_id:
             return False
 
         filter_obj.keyword = keyword
@@ -87,11 +89,11 @@ async def remove_filter(ctx: AppContext, chat_id: int, keyword: str) -> bool:
         return False
 
 
-async def remove_filter_by_id(ctx: AppContext, filter_id: int) -> bool:
-    """Remove a filter by its ID."""
+async def remove_filter_by_id(ctx: AppContext, filter_id: int, *, chat_id: int) -> bool:
+    """Remove a filter by ID, only if it belongs to chat_id."""
     async with ctx.db() as session:
         filter_obj = await session.get(Filter, filter_id)
-        if filter_obj:
+        if filter_obj and filter_obj.chatId == chat_id:
             await session.delete(filter_obj)
             await session.commit()
             await invalidate_rules("filters", filter_obj.chatId)

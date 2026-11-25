@@ -109,9 +109,13 @@ async def test_filter_cache_invalidates_all_edit_paths_and_isolates_chats(rule_c
     two = await replies.add_filter(ctx, -456, "two", "2")
     assert [r.keyword for r in await get_reply_rules(ctx, -123)] == ["one"]
     assert [r.keyword for r in await get_reply_rules(ctx, -456)] == ["two"]
-    assert await replies.update_filter_by_id(ctx, one.id, "new", "3")
+    # A filter ID from another chat must never be editable or deletable.
+    assert not await replies.update_filter_by_id(ctx, one.id, "hijack", "x", chat_id=-456)
+    assert not await replies.remove_filter_by_id(ctx, one.id, chat_id=-456)
+    assert [r.keyword for r in await get_reply_rules(ctx, -123)] == ["one"]
+    assert await replies.update_filter_by_id(ctx, one.id, "new", "3", chat_id=-123)
     assert [r.keyword for r in await get_reply_rules(ctx, -123)] == ["new"]
-    assert await replies.remove_filter_by_id(ctx, one.id)
+    assert await replies.remove_filter_by_id(ctx, one.id, chat_id=-123)
     assert await get_reply_rules(ctx, -123) == ()
     await replies.add_filter(ctx, -123, "again", "4")
     await get_reply_rules(ctx, -123)

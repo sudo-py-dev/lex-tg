@@ -199,6 +199,9 @@ async def filter_keyword_handler(client: Client, message: Message) -> None:
         return
 
     r = get_cache()
+    # A new keyword starts a fresh filter; drop any abandoned edit target.
+    await r.delete(f"temp_filter_edit_id:{user_id}")
+    await r.delete(f"temp_filter_settings:{user_id}")
     await r.set(f"temp_filter_kw:{user_id}", keyword, ttl=300)
 
     await capture_next_input(user_id, chat_id, "filterResponse", prompt_msg_id, page)

@@ -447,7 +447,8 @@ class ChannelsPlugin(Plugin):
                         logger.error(f"Failed to download watermark image {wm.image}: {e}")
                         wm_img_local_path = None
 
-            if not apply_watermark(
+            if not await asyncio.to_thread(
+                apply_watermark,
                 photo_path,
                 wm.text,
                 output_path,
@@ -539,7 +540,8 @@ class ChannelsPlugin(Plugin):
             if not video_path or not os.path.exists(video_path):
                 return
 
-            if not apply_video_watermark(
+            if not await asyncio.to_thread(
+                apply_video_watermark,
                 video_path,
                 wm.text,
                 output_path,

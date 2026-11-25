@@ -87,7 +87,7 @@ async def test_remove_filter_by_id(db_session, app_context):
     f = await add_filter(app_context, chat_id, "test", "resp")
     f_id = f.id
 
-    success = await remove_filter_by_id(app_context, f_id)
+    success = await remove_filter_by_id(app_context, f_id, chat_id=chat_id)
     assert success is True
 
     # Verify deleted
