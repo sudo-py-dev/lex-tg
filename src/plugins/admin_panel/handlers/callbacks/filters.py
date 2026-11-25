@@ -88,7 +88,7 @@ async def on_edit_filter(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelC
 
     async with ap_ctx.ctx.db() as session:
         f_obj = await session.get(Filter, f_id)
-        if not f_obj:
+        if not f_obj or f_obj.chatId != chat_id:
             await callback.answer(_plain(await at(at_id, "panel.error_generic")), show_alert=True)
             return
 
@@ -133,7 +133,7 @@ async def on_delete_filter(_: Client, callback: CallbackQuery, ap_ctx: AdminPane
 
     from src.db.repositories.filters import remove_filter_by_id
 
-    success = await remove_filter_by_id(ap_ctx.ctx, f_id)
+    success = await remove_filter_by_id(ap_ctx.ctx, f_id, chat_id=chat_id)
     if success:
         await callback.answer(_plain(await at(at_id, "common.done")))
     else:
@@ -229,7 +229,7 @@ async def on_save_filter(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelC
 
     edit_id_raw = await r.get(f"temp_filter_edit_id:{user_id}")
     if edit_id_raw:
-        await update_filter_by_id(
+        updated = await update_filter_by_id(
             ap_ctx.ctx,
             int(edit_id_raw),
             keyword,
@@ -237,7 +237,11 @@ async def on_save_filter(_: Client, callback: CallbackQuery, ap_ctx: AdminPanelC
             response_type=resp_data["type"],
             file_id=resp_data.get("file_id"),
             settings=settings,
+            chat_id=chat_id,
         )
+        if not updated:
+            await callback.answer(_plain(await at(at_id, "panel.error_generic")), show_alert=True)
+            return
     else:
         try:
             await add_filter(

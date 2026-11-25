@@ -195,3 +195,28 @@ async def test_settings_repository_serializes_concurrent_first_writes(tmp_path):
                 await update_settings(ctx, chat_id, unsupportedField=True)
     finally:
         await engine.dispose()
+
+
+async def test_render_cancellation_waits_for_worker_thread():
+    """A cancelled render must not unwind (and delete temp files) mid-render."""
+    import asyncio
+    import threading
+    import time
+
+    from src.plugins.channels import _render_in_thread
+
+    started, finished = threading.Event(), threading.Event()
+
+    def slow_render():
+        started.set()
+        time.sleep(0.2)
+        finished.set()
+        return True
+
+    task = asyncio.create_task(_render_in_thread(slow_render))
+    while not started.is_set():
+        await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert finished.is_set()

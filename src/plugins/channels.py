@@ -64,6 +64,22 @@ class WatermarkOptions:
     video_motion: str
 
 
+async def _render_in_thread(func, *args, **kwargs):
+    """Run a blocking renderer off the event loop.
+
+    Cancellation cannot stop the worker thread, so wait for it to finish before
+    unwinding; the caller's temporary directory must outlive the renderer.
+    """
+    task = asyncio.ensure_future(asyncio.to_thread(func, *args, **kwargs))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        while not task.done():
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await asyncio.shield(task)
+        raise
+
+
 class ChannelsPlugin(Plugin):
     """
     Plugin to handle channel administration and automation with flood protection.
@@ -101,8 +117,11 @@ class ChannelsPlugin(Plugin):
             self._worker_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._worker_task
-        for task in list(self._album_jobs.values()):
+        album_jobs = list(self._album_jobs.values())
+        for task in album_jobs:
             task.cancel()
+        # Let cancelled jobs finish any in-flight render and temp-file cleanup.
+        await asyncio.gather(*album_jobs, return_exceptions=True)
         self._album_jobs.clear()
 
     async def _worker(self, client: Client) -> None:
@@ -447,7 +466,8 @@ class ChannelsPlugin(Plugin):
                         logger.error(f"Failed to download watermark image {wm.image}: {e}")
                         wm_img_local_path = None
 
-            if not apply_watermark(
+            if not await _render_in_thread(
+                apply_watermark,
                 photo_path,
                 wm.text,
                 output_path,
@@ -539,7 +559,8 @@ class ChannelsPlugin(Plugin):
             if not video_path or not os.path.exists(video_path):
                 return
 
-            if not apply_video_watermark(
+            if not await _render_in_thread(
+                apply_video_watermark,
                 video_path,
                 wm.text,
                 output_path,
